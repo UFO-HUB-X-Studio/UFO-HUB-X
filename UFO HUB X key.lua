@@ -14,6 +14,7 @@ local CG   = game:GetService("CoreGui")
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local LP = Players.LocalPlayer
+local GuiService = game:GetService("GuiService") -- [ADD] ใช้เปิดเบราว์เซอร์
 
 -------------------- THEME --------------------
 local LOGO_ID   = 112676905543996
@@ -32,6 +33,9 @@ local SERVER_BASES = {
     "https://ufo-hub-x-key-umoq.onrender.com",         -- ตัวหลัก
     -- "https://ufo-hub-x-server-key2.onrender.com",   -- ตัวสำรอง (ถ้ามี)
 }
+
+-- [ADD] หน้า UI จริง (ไม่ใช่ API)
+local UI_PAGE = (SERVER_BASES[1] or "") .. "/"
 
 -- อายุคีย์เริ่มต้น (กรณี allow-list ภายในไฟล์นี้)
 local DEFAULT_TTL_SECONDS = 48 * 3600 -- 48 ชั่วโมง
@@ -148,6 +152,21 @@ local function tween(o, goal, t)
 end
 
 local function setClipboard(s) if setclipboard then pcall(setclipboard, s) end end
+
+-- [ADD] เปิดเบราว์เซอร์อย่างปลอดภัย / fallback เป็นการคัดลอก
+local function openExternal(url)
+    local ok = false
+    if GuiService and GuiService.OpenBrowserWindow then
+        ok = pcall(function() GuiService:OpenBrowserWindow(url) end)
+    end
+    if (not ok) and syn and syn.open_url then
+        ok = pcall(function() syn.open_url(url) end)
+    end
+    if not ok then
+        setClipboard(url)
+    end
+    return ok
+end
 
 -------------------- ROOT --------------------
 local gui = Instance.new("ScreenGui")
@@ -445,6 +464,7 @@ local btnGetKey = make("TextButton", {
     make("UICorner",{CornerRadius=UDim.new(0,14)}),
     make("UIStroke",{Color=ACCENT, Transparency=0.6})
 })
+-- Handler เดิม: คัดลอกลิงก์ API (คงไว้)
 btnGetKey.MouseButton1Click:Connect(function()
     local uid   = tostring(LP and LP.UserId or "")
     local place = tostring(game.PlaceId or "")
@@ -459,6 +479,19 @@ btnGetKey.MouseButton1Click:Connect(function()
     task.delay(1.5,function() btnGetKey.Text="🔐  Get Key" end)
 end)
 
+-- [ADD] Handler เพิ่มเติม: เปิดหน้า UI จริง + ยังคงคัดลอกลิงก์ API ให้ด้วย
+btnGetKey.MouseButton1Click:Connect(function()
+    local opened = openExternal(UI_PAGE) -- เปิดหน้า UI (ไม่ใช่ /getkey)
+    if opened then
+        btnGetKey.Text = "🌐 UI opened + link copied!"
+    else
+        btnGetKey.Text = "✅ Link copied! (open browser)"
+    end
+    task.delay(1.6, function()
+        btnGetKey.Text = "🔐  Get Key"
+    end)
+end)
+
 -------------------- SUPPORT --------------------
 local supportRow = make("Frame", {
     Parent=panel, AnchorPoint = Vector2.new(0.5,1),
@@ -471,22 +504,37 @@ make("UIListLayout", {
     VerticalAlignment   = Enum.VerticalAlignment.Center,
     SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0,6)
 }, {})
+
 make("TextLabel", {
-    Parent=supportRow, LayoutOrder=1, BackgroundTransparency=1,
-    Font=Enum.Font.Gotham, TextSize=16, Text="Need support?",
-    TextColor3=Color3.fromRGB(200,200,200), AutomaticSize=Enum.AutomaticSize.X
+    Parent = supportRow, LayoutOrder = 1, BackgroundTransparency = 1,
+    Font = Enum.Font.Gotham, TextSize = 16, Text = "Need support?",
+    TextColor3 = Color3.fromRGB(200,200,200), AutomaticSize = Enum.AutomaticSize.X
 }, {})
+
 local btnDiscord = make("TextButton", {
-    Parent=supportRow, LayoutOrder=2, BackgroundTransparency=1,
-    Font=Enum.Font.GothamBold, TextSize=16, Text="Join the Discord",
-    TextColor3=ACCENT, AutomaticSize=Enum.AutomaticSize.X
-},{})
+    Parent = supportRow, LayoutOrder = 2, BackgroundTransparency = 1,
+    Font = Enum.Font.GothamBold, TextSize = 16, Text = "Join the Discord",
+    TextColor3 = ACCENT, AutomaticSize = Enum.AutomaticSize.X
+}, {})
+
 btnDiscord.MouseButton1Click:Connect(function()
     setClipboard(DISCORD_URL)
     btnDiscord.Text = "✅ Link copied!"
-    task.delay(1.5,function() btnDiscord.Text="Join the Discord" end)
+    task.delay(1.5, function()
+        btnDiscord.Text = "Join the Discord"
+    end)
 end)
 
 -------------------- Open Animation --------------------
 panel.Position = UDim2.fromScale(0.5,0.5) + UDim2.fromOffset(0,14)
-tween(panel, {Position = UDim2.fromScale(0.5,0.5)}, .18)
+tween(panel, { Position = UDim2.fromScale(0.5,0.5) }, .18)
+-- (Optional) ส่ง uid/place ไปหน้า UI
+local function makeUiLink()
+    local uid   = tostring(Players.LocalPlayer and Players.LocalPlayer.UserId or "")
+    local place = tostring(game.PlaceId or "")
+    return string.format("%s/?uid=%s&place=%s",
+        (SERVER_BASES[1] or ""),
+        HttpService:UrlEncode(uid),
+        HttpService:UrlEncode(place)
+    )
+end
