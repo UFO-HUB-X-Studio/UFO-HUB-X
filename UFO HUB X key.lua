@@ -15,7 +15,7 @@ local FG        = Color3.fromRGB(235,235,235)
 local SUB       = Color3.fromRGB(22,22,22)
 
 local DISCORD_URL = "https://discord.gg/your-server"
-local GETKEY_URL  = "https://ufo-hub-x-key-umoq.onrender.com/"  -- server จริง
+local GETKEY_URL  = "https://ufo-hub-x-key.onrender.com"  -- server จริง
 
 -- เรียกใช้ตอนกด Submit (ค่อยผูกระบบจริงทีหลัง)
 local function OnSubmitKey(key)
