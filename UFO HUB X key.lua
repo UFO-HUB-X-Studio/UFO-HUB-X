@@ -1,11 +1,9 @@
 --========================================================
--- UFO HUB X — KEY UI (v18+, full drop-in)
--- - API JSON: /verify?key=&uid=&place=  และ  /getkey
--- - JSON parse ด้วย HttpService
--- - จำอายุคีย์ผ่าน _G.UFO_SaveKeyState (48 ชม. หรือ expires_at จาก server)
--- - ปุ่ม Get Key คัดลอกลิงก์พร้อม uid/place
--- - รองรับหลายเซิร์ฟเวอร์ (failover & retry)
--- - Fade-out แล้ว Destroy เมื่อสำเร็จ
+-- UFO HUB X — KEY UI (v18.1, single file, add-only)
+-- - JSON verify (format=json) + fallback text/plain ("VALID"/"INVALID")
+-- - Failover หลายเซิร์ฟเวอร์ + retry
+-- - เก็บอายุคีย์ผ่าน _G.UFO_SaveKeyState (ถ้ามี)
+-- - Fade-out เมื่อสำเร็จ
 --========================================================
 
 -------------------- Services --------------------
@@ -24,20 +22,20 @@ local SUB       = Color3.fromRGB(22,22,22)
 local RED       = Color3.fromRGB(210,60,60)
 local GREEN     = Color3.fromRGB(60,200,120)
 
--------------------- LINKS --------------------
+-------------------- LINKS / SERVERS --------------------
 local DISCORD_URL = "https://discord.gg/your-server"
 
--- ใส่ URL เซิร์ฟเวอร์ของคุณ (ลำดับตามความสำคัญ) — จะหมุนสำรองอัตโนมัติ
+-- เรียงลำดับตามความสำคัญ (ตัวแรกคือหลัก)
 local SERVER_BASES = {
-    "https://ufo-hub-x-key-umoq.onrender.com",         -- ตัวหลัก
-    -- "https://ufo-hub-x-server-key2.onrender.com",   -- ตัวสำรอง (ถ้ามี)
+    "https://ufo-hub-x-key-umoq.onrender.com",
+    -- "https://ufo-hub-x-key-backup.onrender.com",
 }
 
--- อายุคีย์เริ่มต้น (กรณี allow-list ภายในไฟล์นี้)
+-- อายุคีย์เริ่มต้น (กรณี allow-list)
 local DEFAULT_TTL_SECONDS = 48 * 3600 -- 48 ชั่วโมง
 
 ----------------------------------------------------------------
--- Allow-list คีย์พิเศษ (ผ่านแน่)
+-- Allow-list คีย์พิเศษ
 ----------------------------------------------------------------
 local ALLOW_KEYS = {
     ["JJJMAX"]                 = { reusable = true,  ttl = DEFAULT_TTL_SECONDS },
@@ -71,14 +69,19 @@ local function http_json_get(url)
     return true, data, nil
 end
 
--- ลองทีละ SERVER_BASE + retry/backoff เผื่อ Render ตื่นช้า
+local function trimUpper(s)
+    s = tostring(s or "")
+    s = s:gsub("^%s+",""):gsub("%s+$","")
+    return string.upper(s)
+end
+
+-- Failover + retry สำหรับ JSON
 local function json_get_with_failover(path_qs)
     local last_err = "no_servers"
     for _, base in ipairs(SERVER_BASES) do
         local url = (base..path_qs)
-        -- 3 รอบต่อเซิร์ฟเวอร์: 0s / 0.6s / 1.2s
         for i=0,2 do
-            if i>0 then task.wait(0.6*i) end
+            if i>0 then task.wait(0.6*i) end -- backoff
             local ok, data, err = http_json_get(url)
             if ok and data then return true, data end
             last_err = err or "http_error"
@@ -103,13 +106,13 @@ local function isAllowedKey(k)
 end
 
 ----------------------------------------------------------------
--- ตรวจคีย์กับ Server (JSON)
--- server ตอบ: { ok:true, valid:true/false, expires_at:<unix>, reason:"..." }
+-- (เดิม) ตรวจคีย์กับ Server แบบ JSON อย่างเดียว
+--  *คงไว้ ไม่ลบ* — แต่ใน flow จะใช้ตัวใหม่ verifySmartWithFailover แทน
 ----------------------------------------------------------------
-local function verifyWithServer(k)
+local function verifyWithServer_JSONOnly(k)
     local uid   = tostring(LP and LP.UserId or "")
     local place = tostring(game.PlaceId or "")
-    local qs = string.format("/verify?key=%s&uid=%s&place=%s",
+    local qs = string.format("/verify?key=%s&uid=%s&place=%s&format=json",
         HttpService:UrlEncode(k),
         HttpService:UrlEncode(uid),
         HttpService:UrlEncode(place)
@@ -127,8 +130,56 @@ local function verifyWithServer(k)
 end
 
 ----------------------------------------------------------------
--- UI Helpers
+-- (ใหม่) ตรวจคีย์แบบ Smart: JSON ก่อน → ถ้าไม่ได้ fallback เป็น text/plain
+-- เซิร์ฟเวอร์ตอบ text ว่า "VALID" / "INVALID"
 ----------------------------------------------------------------
+local function verifySmartWithFailover(k)
+    -- 1) ลอง JSON ก่อน (format=json)
+    local okJ, reasonJ, expJ = verifyWithServer_JSONOnly(k)
+    if okJ ~= nil then
+        if okJ then return true, nil, expJ else
+            -- ถ้า server ตอบ invalid ชัดเจน ก็คืนเลย ไม่ต้อง fallback
+            if reasonJ ~= "server_unreachable" and reasonJ ~= "http_error" and reasonJ ~= "json_error" then
+                return false, reasonJ, nil
+            end
+        end
+    end
+
+    -- 2) Fallback เป็น text/plain ("VALID"/"INVALID")
+    local uid   = tostring(LP and LP.UserId or "")
+    local place = tostring(game.PlaceId or "")
+    local qsBase = string.format("/verify?key=%s&uid=%s&place=%s",
+        HttpService:UrlEncode(k),
+        HttpService:UrlEncode(uid),
+        HttpService:UrlEncode(place)
+    )
+
+    local last_err = "server_unreachable"
+    for _, base in ipairs(SERVER_BASES) do
+        local url = base .. qsBase
+        for i=0,2 do
+            if i>0 then task.wait(0.5*i) end
+            local ok, body = http_get(url)
+            if ok and body then
+                local ans = trimUpper(body)
+                if ans == "VALID" then
+                    -- ถ้าได้โหมด text ไม่มี expires → ใส่ default ให้
+                    local exp = os.time() + DEFAULT_TTL_SECONDS
+                    return true, nil, exp
+                elseif ans == "INVALID" then
+                    return false, "invalid", nil
+                else
+                    last_err = "unknown_text_response"
+                end
+            else
+                last_err = "http_error"
+            end
+        end
+    end
+    return false, last_err, nil
+end
+
+-------------------- UI Helpers --------------------
 local function safeParent(gui)
     local ok=false
     if syn and syn.protect_gui then pcall(function() syn.protect_gui(gui) end) end
@@ -169,7 +220,7 @@ local panel = make("Frame", {
     make("UIStroke",{Color=ACCENT, Thickness=2, Transparency=0.1})
 })
 
--- ปุ่มปิด (แค่ปิด ไม่ไปหน้า Download)
+-- ปุ่มปิด
 local btnClose = make("TextButton", {
     Parent=panel, Text="X", Font=Enum.Font.GothamBold, TextSize=20, TextColor3=Color3.new(1,1,1),
     AutoButtonColor=false, BackgroundColor3=Color3.fromRGB(210,35,50),
@@ -203,12 +254,9 @@ local titleGroup = make("Frame", {
     Position=UDim2.new(0,28,0,102), Size=UDim2.new(1,-56,0,76)
 }, {})
 make("UIListLayout", {
-    Parent = titleGroup,
-    FillDirection = Enum.FillDirection.Vertical,
-    HorizontalAlignment = Enum.HorizontalAlignment.Left,
-    VerticalAlignment = Enum.VerticalAlignment.Top,
-    SortOrder = Enum.SortOrder.LayoutOrder,
-    Padding   = UDim.new(0,6)
+    Parent = titleGroup, FillDirection = Enum.FillDirection.Vertical,
+    HorizontalAlignment = Enum.HorizontalAlignment.Left, VerticalAlignment = Enum.VerticalAlignment.Top,
+    SortOrder = Enum.SortOrder.LayoutOrder, Padding   = UDim.new(0,6)
 }, {})
 make("TextLabel", {
     Parent = titleGroup, LayoutOrder = 1, BackgroundTransparency = 1, Size=UDim2.new(1,0,0,32),
@@ -374,7 +422,7 @@ local function forceErrorUI(mainText, toastText)
 end
 
 ----------------------------------------------------------------
--- Submit flow
+-- Submit flow (ใช้ verifySmartWithFailover)
 ----------------------------------------------------------------
 local function doSubmit()
     if submitting then return end
@@ -396,7 +444,8 @@ local function doSubmit()
         expires_at = os.time() + (tonumber(meta.ttl) or DEFAULT_TTL_SECONDS)
         print("[UFO-HUB-X] allowed key:", nk, "exp:", expires_at)
     else
-        valid, reason, expires_at = verifyWithServer(k)
+        -- ใช้ตัวใหม่: JSON → ถ้าไม่ได้ → text/plain
+        valid, reason, expires_at = verifySmartWithFailover(k)
         if valid then
             print("[UFO-HUB-X] server verified key:", k, "exp:", expires_at)
         else
@@ -405,7 +454,7 @@ local function doSubmit()
     end
 
     if not valid then
-        if reason == "server_unreachable" then
+        if reason == "server_unreachable" or reason == "http_error" then
             forceErrorUI("❌ Invalid Key", "เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ ลองใหม่หรือตรวจเน็ต")
         else
             forceErrorUI("❌ Invalid Key", "กุญแจไม่ถูกต้อง ลองอีกครั้ง")
@@ -423,7 +472,6 @@ local function doSubmit()
     _G.UFO_HUBX_KEY_OK = true
     _G.UFO_HUBX_KEY    = k
 
-    -- สำคัญ: ส่งให้ Boot Loader บันทึก state (เพื่อข้าม Key UI จนหมดอายุ)
     if _G.UFO_SaveKeyState and expires_at then
         pcall(_G.UFO_SaveKeyState, k, tonumber(expires_at) or (os.time()+DEFAULT_TTL_SECONDS), false)
     end
@@ -456,7 +504,7 @@ btnGetKey.MouseButton1Click:Connect(function()
     )
     setClipboard(link)
     btnGetKey.Text = "✅ Link copied!"
-    task.delay(1.5,function() btnGetKey.Text="🔐  Get Key" end)
+    task.delay(1.5, function() btnGetKey.Text = "🔐  Get Key" end)
 end)
 
 -------------------- SUPPORT --------------------
@@ -465,17 +513,22 @@ local supportRow = make("Frame", {
     Position = UDim2.new(0.5,0,1,-18), Size = UDim2.new(1,-56,0,24),
     BackgroundTransparency = 1
 }, {})
+
 make("UIListLayout", {
-    Parent = supportRow, FillDirection = Enum.FillDirection.HORIZONTAL,
+    Parent = supportRow,
+    FillDirection = Enum.FillDirection.HORIZONTAL,
     HorizontalAlignment = Enum.HorizontalAlignment.Center,
     VerticalAlignment   = Enum.VerticalAlignment.Center,
-    SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0,6)
+    SortOrder = Enum.SortOrder.LayoutOrder,
+    Padding = UDim.new(0,6)
 }, {})
+
 make("TextLabel", {
     Parent=supportRow, LayoutOrder=1, BackgroundTransparency=1,
     Font=Enum.Font.Gotham, TextSize=16, Text="Need support?",
     TextColor3=Color3.fromRGB(200,200,200), AutomaticSize=Enum.AutomaticSize.X
 }, {})
+
 local btnDiscord = make("TextButton", {
     Parent=supportRow, LayoutOrder=2, BackgroundTransparency=1,
     Font=Enum.Font.GothamBold, TextSize=16, Text="Join the Discord",
@@ -484,7 +537,7 @@ local btnDiscord = make("TextButton", {
 btnDiscord.MouseButton1Click:Connect(function()
     setClipboard(DISCORD_URL)
     btnDiscord.Text = "✅ Link copied!"
-    task.delay(1.5,function() btnDiscord.Text="Join the Discord" end)
+    task.delay(1.5, function() btnDiscord.Text = "Join the Discord" end)
 end)
 
 -------------------- Open Animation --------------------
