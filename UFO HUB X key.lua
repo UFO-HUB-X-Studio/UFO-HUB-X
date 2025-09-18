@@ -25,9 +25,12 @@ local GREEN     = Color3.fromRGB(60,200,120)
 -------------------- LINKS / SERVERS --------------------
 local DISCORD_URL = "https://discord.gg/your-server"
 
--- เรียงลำดับตามความสำคัญ (ตัวแรกคือหลัก)
-local SERVER_BASES = { "https://<your-server-key-gateway>.onrender.com" }
--- หรือแค่ GETKEY_URL = "https://<gateway>.onrender.com",
+-- ถ้า UI คุณมีตัวแปรเดียว
+local GETKEY_URL = "https://<your-gateway>.onrender.com"
+
+-- ถ้า UI รองรับหลายโดเมนเป็นตาราง
+local SERVER_BASES = {
+  "https://<your-gateway>.onrender.com"
 }
 
 -- อายุคีย์เริ่มต้น (กรณี allow-list)
