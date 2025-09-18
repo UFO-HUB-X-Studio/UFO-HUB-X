@@ -629,3 +629,193 @@ if not _UFOX_CLICK_GUARD_APPLIED and btnSubmit then
 end
 
 -- ==================== [END OF ADD-ONLY PATCH] ====================
+
+-- ==================== [ADD-ONLY GATE] Strict Verify Overlay (no removal) ====================
+-- ไอเดีย: สร้างปุ่มโปร่งใสซ้อนบนปุ่มเดิม เพื่อ intercept คลิกทุกครั้ง
+-- - ตรวจคีย์แบบเข้มด้วย JSON { ok=true, valid=true, expires_at > now } จากเซิร์ฟเวอร์
+-- - ถ้าไม่ผ่าน: โชว์ error และ "ไม่ปล่อย" ให้ปุ่มเดิมทำงาน
+-- - ถ้าผ่าน: เปิดทางชั่วคราว แล้วสั่ง btnSubmit:Activate() ให้ flow เดิมทำงานตามปกติ
+-- - รองรับกด Enter ด้วย (ดักจาก TextBox)
+
+-- รายการเซิร์ฟเวอร์ (ตัวแรกใช้ GETKEY_URL เดิมของคุณ)
+local _UFOX_SERVER_BASES = { GETKEY_URL }
+-- เพิ่มสำรองได้ (เฉพาะ "เพิ่ม" เท่านั้น)
+-- table.insert(_UFOX_SERVER_BASES, "https://ufo-hub-x-key-backup.onrender.com")
+
+-- uid/place สำหรับส่งไปให้เซิร์ฟเวอร์รู้ว่าใคร จากไหน
+local function _ufox_uid_place_qs()
+    local Players = game:GetService("Players")
+    local plr = Players.LocalPlayer
+    local uid   = tostring(plr and plr.UserId or "")
+    local place = tostring(game.PlaceId or "")
+    return ("&uid="..HttpService:UrlEncode(uid).."&place="..HttpService:UrlEncode(place))
+end
+
+-- JSON GET + failover + retry/backoff (0s / 0.4s / 0.8s)
+local function _ufox_json_get_failover(path_qs, timeoutSec)
+    timeoutSec = tonumber(timeoutSec) or 8
+    local lastErr = "no_servers"
+    for _,base in ipairs(_UFOX_SERVER_BASES) do
+        local url = tostring(base or "") .. tostring(path_qs or "")
+        for i=0,2 do
+            if i>0 then task.wait(0.4*i) end
+            local done, okOut, dataOut, errOut = false, false, nil, "timeout"
+            task.spawn(function()
+                local ok, body = http_get(url) -- ใช้ฟังก์ชันเดิมของคุณ (ไม่แก้/ไม่ลบ)
+                if ok and body then
+                    local okj, data = pcall(function() return HttpService:JSONDecode(tostring(body)) end)
+                    if okj and type(data)=="table" then
+                        okOut, dataOut, errOut = true, data, nil
+                    else
+                        okOut, errOut = false, "json_error"
+                    end
+                else
+                    okOut, errOut = false, (body or "http_error")
+                end
+                done = true
+            end)
+            local t0 = os.clock()
+            while not done and (os.clock()-t0) < timeoutSec do task.wait(0.03) end
+            if done and okOut then return true, dataOut, nil end
+            lastErr = errOut or "http_error"
+        end
+    end
+    return false, nil, lastErr
+end
+
+-- ตรวจแบบเข้มจริง: ต้องได้ JSON { ok=true, valid=true, expires_at:number > now }
+local function _ufox_verify_strict(key)
+    local qs = "/verify?key="..HttpService:UrlEncode(key).._ufox_uid_place_qs()
+    local ok, j, err = _ufox_json_get_failover(qs, 8)
+    if not ok or not j then return false, (err or "http_error"), nil end
+    if j.ok == true and j.valid == true then
+        local exp = tonumber(j.expires_at)
+        if exp and exp > os.time() then
+            return true, nil, exp
+        else
+            return false, "bad_expires_at", nil
+        end
+    end
+    return false, tostring(j.reason or "invalid"), nil
+end
+
+-- ------------ สร้าง Gate ปุ่มโปร่งใสซ้อนบน btnSubmit ------------
+local overlay -- ปุ่มโปร่งใส
+local function _ufox_make_overlay()
+    if not panel or not btnSubmit then return end
+    if overlay and overlay.Parent then overlay:Destroy() end
+    overlay = Instance.new("TextButton")
+    overlay.Name = "UFOX_SubmitOverlay"
+    overlay.BackgroundTransparency = 1
+    overlay.Text = ""
+    overlay.AutoButtonColor = false
+    overlay.ZIndex = (btnSubmit.ZIndex or 1) + 1
+    overlay.Size = btnSubmit.Size
+    overlay.Position = btnSubmit.Position
+    overlay.AnchorPoint = btnSubmit.AnchorPoint
+    overlay.Parent = panel
+end
+
+_ufox_make_overlay()
+-- ถ้าปรับขนาด/ตำแหน่งปุ่มเดิมทีหลัง ก็ sync overlay ให้ตาม
+task.spawn(function()
+    while panel and panel.Parent do
+        if overlay and btnSubmit then
+            overlay.Size = btnSubmit.Size
+            overlay.Position = btnSubmit.Position
+            overlay.AnchorPoint = btnSubmit.AnchorPoint
+            overlay.ZIndex = math.max((btnSubmit.ZIndex or 1)+1, 99)
+        end
+        task.wait(0.15)
+    end
+end)
+
+-- ปิดการ Activate ของปุ่มเดิมไว้ตลอด (กันเคส keyBox กด Enter แล้วเรียก :Activate() เข้าปุ่มเดิมทันที)
+-- เราจะ “เปิดทางชั่วคราว” เองตอนที่ผ่าน strict เท่านั้น
+if btnSubmit then btnSubmit.Active = false end
+
+-- ฟังก์ชัน Gate หลัก
+local _gateRunning = false
+local function _ufox_gate_submit()
+    if _gateRunning then return end
+    _gateRunning = true
+
+    local key = (keyBox and keyBox.Text or "") or ""
+    key = tostring(key)
+    if key == "" then
+        forceErrorUI("🚫 Please enter a key", "โปรดใส่รหัสก่อนนะ")
+        _gateRunning = false
+        return
+    end
+
+    setStatus("กำลังตรวจสอบกับเซิร์ฟเวอร์ (strict)…", nil)
+    if btnSubmit then TS:Create(btnSubmit, TweenInfo.new(0.08), {BackgroundColor3 = Color3.fromRGB(70,170,120)}):Play() end
+
+    -- ตรวจเข้ม
+    local ok, reason, exp = _ufox_verify_strict(key)
+
+    if not ok then
+        -- ไม่ผ่าน → ไม่ปล่อยให้ปุ่มเดิมทำงาน
+        if reason == "server_unreachable" then
+            forceErrorUI("❌ Invalid Key", "เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ ลองใหม่หรือตรวจเน็ต")
+        else
+            forceErrorUI("❌ Invalid Key", "กุญแจไม่ถูกต้อง ลองอีกครั้ง")
+        end
+        _gateRunning = false
+        return
+    end
+
+    -- ผ่านจริง → เปิดทางชั่วคราว แล้วสั่งปุ่มเดิมทำงาน
+    showToast("ยืนยัน strict ผ่าน กำลังเข้าสู่ระบบเดิม…", true)
+    if _G and _G.UFO_SaveKeyState and exp then pcall(_G.UFO_SaveKeyState, key, exp, false) end
+
+    -- เปิดปุ่มเดิมชั่วคราว เพื่อให้ doSubmit เดิมวิ่ง
+    if btnSubmit then
+        btnSubmit.Active = true
+        -- ซ่อน overlay ชั่วคราว เพื่อกันไม่ให้บัง self-Activate
+        if overlay then overlay.Visible = false end
+        task.wait() -- 1 frame
+        pcall(function() btnSubmit:Activate() end)
+        task.wait(0.05)
+        if overlay then overlay.Visible = true end
+        btnSubmit.Active = false
+    end
+
+    _gateRunning = false
+end
+
+-- คลิกที่ overlay = วิ่งผ่าน Gate
+if overlay then
+    overlay.MouseButton1Click:Connect(_ufox_gate_submit)
+    overlay.Activated:Connect(_ufox_gate_submit)
+end
+
+-- รองรับกด Enter ที่ keyBox (แทนที่จะให้ไปเรียก :Activate ของปุ่มเดิมโดยตรง)
+if keyBox then
+    keyBox.FocusLost:Connect(function(enter)
+        if enter then
+            _ufox_gate_submit()
+        end
+    end)
+end
+
+-- กัน spam คลิกเร็ว ๆ ที่ overlay
+local _lastClick = 0
+if overlay then
+    overlay.MouseButton1Click:Connect(function()
+        local now = os.clock()
+        if now - _lastClick < 0.8 then return end
+        _lastClick = now
+    end)
+end
+
+-- ตัวช่วย debug สถานะ server (ไม่ยุ่ง UI เดิม)
+task.spawn(function()
+    local ok, j = _ufox_json_get_failover("/status", 5)
+    if ok and j and j.ok then
+        print("[UFO-HUB-X] Server status: ONLINE")
+    else
+        print("[UFO-HUB-X] Server status: OFFLINE or Unreachable")
+    end
+end)
+-- ==================== [END ADD-ONLY GATE] ====================
