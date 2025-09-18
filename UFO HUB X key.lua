@@ -484,3 +484,148 @@ end)
 -------------------- Open Animation --------------------
 panel.Position = UDim2.fromScale(0.5,0.5) + UDim2.fromOffset(0,14)
 tween(panel, {Position = UDim2.fromScale(0.5,0.5)}, .18)
+
+-- ==================== [ADD-ONLY PATCH] UFO HUB X — Strict Server Verify, Retry, & Safe Rollback ====================
+-- ใส่ต่อท้ายไฟล์เดิมทั้งก้อนได้เลย (ไม่แก้/ไม่ลบของเดิม)
+
+-- รองรับหลายเบส (ตัวแรกคือ GETKEY_URL เดิมของคุณ) — จะลองทีละอัน + retry/backoff
+local _UFOX_SERVER_BASES = { GETKEY_URL }
+-- ถ้ามีโดเมนสำรอง ค่อยๆ เติมได้ เช่น:
+-- table.insert(_UFOX_SERVER_BASES, "https://ufo-hub-x-key-backup.onrender.com")
+
+-- ผูก uid/place ไปกับทุกคำขอ ให้เซิร์ฟเวอร์รู้ว่าใคร/จากไหน
+local function _ufox_uid_place_qs()
+    local plr = game:GetService("Players").LocalPlayer
+    local uid   = tostring(plr and plr.UserId or "")
+    local place = tostring(game.PlaceId or "")
+    return ("&uid="..HttpService:UrlEncode(uid).."&place="..HttpService:UrlEncode(place))
+end
+
+-- JSON GET (เข้มงวด) + failover + retry/backoff (0s / 0.4s / 0.8s)
+local function _ufox_json_get_failover(path_qs, timeoutSec)
+    timeoutSec = tonumber(timeoutSec) or 8
+    local lastErr = "no_servers"
+    for _,base in ipairs(_UFOX_SERVER_BASES) do
+        local url = tostring(base or "") .. tostring(path_qs or "")
+        for i=0,2 do
+            if i>0 then task.wait(0.4*i) end
+            local done, okOut, dataOut, errOut = false, false, nil, "timeout"
+            task.spawn(function()
+                local ok, body = http_get(url)
+                if ok and body then
+                    local okj, data = pcall(function() return HttpService:JSONDecode(tostring(body)) end)
+                    if okj and type(data)=="table" then
+                        okOut, dataOut, errOut = true, data, nil
+                    else
+                        okOut, errOut = false, "json_error"
+                    end
+                else
+                    okOut, errOut = false, (body or "http_error")
+                end
+                done = true
+            end)
+            local t0 = os.clock()
+            while not done and (os.clock()-t0) < timeoutSec do task.wait(0.03) end
+            if done and okOut then return true, dataOut, nil end
+            lastErr = errOut or "http_error"
+        end
+    end
+    return false, nil, lastErr
+end
+
+-- ตรวจแบบ “เข้มงวดจริง”: ต้องได้ { ok=true, valid=true, expires_at:number > now }
+local function _ufox_verify_strict(key)
+    local qs = "/verify?key="..HttpService:UrlEncode(key).._ufox_uid_place_qs()
+    local ok, j, err = _ufox_json_get_failover(qs, 8)
+    if not ok or not j then return false, (err or "http_error"), nil end
+    if j.ok == true and j.valid == true then
+        local exp = tonumber(j.expires_at)
+        if exp and exp > os.time() then
+            return true, nil, exp
+        else
+            return false, "bad_expires_at", nil
+        end
+    end
+    return false, tostring(j.reason or "invalid"), nil
+end
+
+-- บังคับ “ตรวจซ้ำ” หลัง flow เดิมกดยืนยันสำเร็จ
+-- ถ้า strict ไม่ผ่าน → ย้อน UI เป็น error (กันเคส “ใส่อะไรก็ผ่าน”)
+if not _UFOX_STRICT_WRAPPED then
+    _UFOX_STRICT_WRAPPED = true
+    local _orig_doSubmit = doSubmit
+    doSubmit = function()
+        if submitting then return end
+        local k = (keyBox and keyBox.Text) or ""
+        _orig_doSubmit()
+
+        task.defer(function()
+            -- เดิมผ่านแล้ว? ตรวจซ้ำด้วย strict
+            if _G and _G.UFO_HUBX_KEY_OK == true and _G.UFO_HUBX_KEY == k and k ~= "" then
+                local ok, reason, exp = _ufox_verify_strict(k)
+                if ok and exp then
+                    if _G.UFO_SaveKeyState then pcall(_G.UFO_SaveKeyState, k, exp, false) end
+                    -- ผ่านจริง เงียบ ๆ ไป (UI เดิมอาจกำลัง fade-out อยู่แล้ว)
+                else
+                    -- ไม่ผ่านจริง → rollback UI ให้เห็นชัด
+                    _G.UFO_HUBX_KEY_OK = false
+                    setStatus("เซิร์ฟเวอร์ปฏิเสธคีย์: "..tostring(reason or "invalid"), false)
+                    showToast("❌ Key rejected by server", false)
+                    submitting = false
+                    if btnSubmit then
+                        btnSubmit.Active = true
+                        TS:Create(btnSubmit, TweenInfo.new(0.08), {BackgroundColor3 = Color3.fromRGB(210,60,60)}):Play()
+                        btnSubmit.Text = "🔒  Submit Key"
+                        btnSubmit.TextColor3 = Color3.new(1,1,1)
+                    end
+                    if keyStroke then
+                        local old = keyStroke.Color
+                        TS:Create(keyStroke, TweenInfo.new(0.05), {Color = Color3.fromRGB(255,90,90), Transparency = 0}):Play()
+                        task.delay(.22, function()
+                            TS:Create(keyStroke, TweenInfo.new(0.12), {Color = old, Transparency = 0.75}):Play()
+                        end)
+                    end
+                end
+            end
+        end)
+    end
+end
+
+-- เสริม log สถานะเซิร์ฟเวอร์ (ถ้ามี /status)
+task.spawn(function()
+    local ok, j = _ufox_json_get_failover("/status", 5)
+    if ok and j and j.ok then
+        print("[UFO-HUB-X] Server status: ONLINE")
+    else
+        print("[UFO-HUB-X] Server status: OFFLINE or Unreachable")
+    end
+end)
+
+-- ปุ่ม Get Key (เพิ่มความฉลาด — ไม่ลบของเดิม): copy /getkey?uid=&place=
+if not _UFOX_GETKEY_AUGMENTED and btnGetKey then
+    _UFOX_GETKEY_AUGMENTED = true
+    btnGetKey.MouseButton1Click:Connect(function()
+        local plr = game:GetService("Players").LocalPlayer
+        local uid   = tostring(plr and plr.UserId or "")
+        local place = tostring(game.PlaceId or "")
+        local link = GETKEY_URL.."/getkey?uid="..HttpService:UrlEncode(uid).."&place="..HttpService:UrlEncode(place)
+        setClipboard(link)
+        btnGetKey.Text = "✅ Link copied!"
+        task.delay(1.5, function() btnGetKey.Text="🔐  Get Key" end)
+    end)
+end
+
+-- ป้องกัน spam verify (debounce ภายใน 900ms) — ไม่แตะ flow เดิม แค่กันคลิกเร็วเกิน
+if not _UFOX_CLICK_GUARD_APPLIED and btnSubmit then
+    _UFOX_CLICK_GUARD_APPLIED = true
+    local last = 0
+    btnSubmit.MouseButton1Click:Connect(function()
+        local now = os.clock()
+        if now - last < 0.9 then
+            return
+        end
+        last = now
+    end)
+end
+
+-- ==================== [END OF ADD-ONLY PATCH] ====================
