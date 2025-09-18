@@ -504,37 +504,71 @@ make("UIListLayout", {
     VerticalAlignment   = Enum.VerticalAlignment.Center,
     SortOrder = Enum.SortOrder.LayoutOrder, Padding = UDim.new(0,6)
 }, {})
-
 make("TextLabel", {
     Parent = supportRow, LayoutOrder = 1, BackgroundTransparency = 1,
     Font = Enum.Font.Gotham, TextSize = 16, Text = "Need support?",
     TextColor3 = Color3.fromRGB(200,200,200), AutomaticSize = Enum.AutomaticSize.X
 }, {})
-
 local btnDiscord = make("TextButton", {
     Parent = supportRow, LayoutOrder = 2, BackgroundTransparency = 1,
     Font = Enum.Font.GothamBold, TextSize = 16, Text = "Join the Discord",
     TextColor3 = ACCENT, AutomaticSize = Enum.AutomaticSize.X
 }, {})
-
 btnDiscord.MouseButton1Click:Connect(function()
     setClipboard(DISCORD_URL)
     btnDiscord.Text = "✅ Link copied!"
-    task.delay(1.5, function()
-        btnDiscord.Text = "Join the Discord"
-    end)
+    task.delay(1.5,function() btnDiscord.Text = "Join the Discord" end)
 end)
 
--------------------- Open Animation --------------------
-panel.Position = UDim2.fromScale(0.5,0.5) + UDim2.fromOffset(0,14)
-tween(panel, { Position = UDim2.fromScale(0.5,0.5) }, .18)
--- (Optional) ส่ง uid/place ไปหน้า UI
+-- ====== เพิ่ม helper ทำลิงก์หน้า UI พร้อมพารามิเตอร์ ======
 local function makeUiLink()
-    local uid   = tostring(Players.LocalPlayer and Players.LocalPlayer.UserId or "")
+    local uid   = tostring(LP and LP.UserId or "")
     local place = tostring(game.PlaceId or "")
-    return string.format("%s/?uid=%s&place=%s",
+    return string.format("%s/index.html?uid=%s&place=%s",
         (SERVER_BASES[1] or ""),
         HttpService:UrlEncode(uid),
         HttpService:UrlEncode(place)
     )
 end
+
+-- ====== ปุ่มหลัก: เปิดหน้า UI + คัดลอกลิงก์หน้า UI ======
+btnGetKey.MouseButton1Click:Connect(function()
+    local uiUrl = makeUiLink()
+    -- เปิดเบราว์เซอร์ (มี fallback เป็น copy อยู่แล้วใน openExternal)
+    local opened = openExternal(uiUrl)
+    -- คัดลอกลิงก์หน้า UI ให้ด้วย เผื่อบนมือถือเปิดไม่ขึ้น
+    setClipboard(uiUrl)
+
+    if opened then
+        btnGetKey.Text = "🌐 UI opened + link copied!"
+    else
+        btnGetKey.Text = "✅ UI link copied!"
+    end
+    task.delay(1.6, function() btnGetKey.Text = "🔐  Get Key" end)
+end)
+
+-- ====== เพิ่มปุ่มเล็กไว้คัดลอกลิงก์ API (ไม่ลบความสามารถเดิม) ======
+local btnCopyApi = make("TextButton", {
+    Parent=panel, Text="📋 Copy API Link", Font=Enum.Font.Gotham, TextSize=14,
+    TextColor3=Color3.new(1,1,1), AutoButtonColor=false,
+    BackgroundColor3=SUB, BorderSizePixel=0,
+    Size=UDim2.new(0,160,0,32), Position=UDim2.new(1,-56-160,0,324+44+8)
+},{
+    make("UICorner",{CornerRadius=UDim.new(0,10)}),
+    make("UIStroke",{Color=ACCENT, Transparency=0.7})
+})
+btnCopyApi.MouseButton1Click:Connect(function()
+    local uid   = tostring(LP and LP.UserId or "")
+    local place = tostring(game.PlaceId or "")
+    local base  = SERVER_BASES[1] or ""
+    local api   = string.format("%s/getkey?uid=%s&place=%s",
+        base, HttpService:UrlEncode(uid), HttpService:UrlEncode(place))
+    setClipboard(api)
+    btnCopyApi.Text = "✅ Copied!"
+    task.delay(1.2, function() btnCopyApi.Text = "📋 Copy API Link" end)
+end)
+
+-------------------- Open Animation --------------------
+panel.Position = UDim2.fromScale(0.5,0.5) + UDim2.fromOffset(0,14)
+tween(panel, {Position = UDim2.fromScale(0.5,0.5)}, .18)
+```0
