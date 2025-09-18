@@ -24,7 +24,7 @@ local SUB       = Color3.fromRGB(22,22,22)
 local DISCORD_URL = "https://discord.gg/your-server"
 
 -- ใส่ URL Render ของคุณตรงนี้ (เช่น: https://ufo-hub-x-server-key2.onrender.com)
-local GETKEY_URL  = "https://ufo-hub-x-server-key2.onrender.com"
+local GETKEY_URL  = "https://ufo-hub-x-key-umoq.onrender.com"
 
 -- อายุคีย์เริ่มต้น (กรณีคีย์ allow-list ภายในไฟล์นี้เอง)
 local DEFAULT_TTL_SECONDS = 48 * 3600 -- 48 ชั่วโมง
