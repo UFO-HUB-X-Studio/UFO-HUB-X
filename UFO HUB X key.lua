@@ -26,9 +26,8 @@ local GREEN     = Color3.fromRGB(60,200,120)
 local DISCORD_URL = "https://discord.gg/your-server"
 
 -- เรียงลำดับตามความสำคัญ (ตัวแรกคือหลัก)
-local SERVER_BASES = {
-    "https://ufo-hub-x-key-umoq.onrender.com",
-    -- "https://ufo-hub-x-key-backup.onrender.com",
+local SERVER_BASES = { "https://<your-server-key-gateway>.onrender.com" }
+-- หรือแค่ GETKEY_URL = "https://<gateway>.onrender.com",
 }
 
 -- อายุคีย์เริ่มต้น (กรณี allow-list)
