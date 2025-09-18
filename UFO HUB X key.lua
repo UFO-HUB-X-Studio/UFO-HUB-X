@@ -1,10 +1,11 @@
 --========================================================
--- UFO HUB X — KEY UI (v18, full drop-in)
--- - ต่อ API จริง (JSON): /verify?key=&uid=&place=  และ /getkey
--- - อ่าน JSON ด้วย HttpService (ไม่พึ่ง string.find)
--- - จำอายุคีย์ (48 ชม. หรือจาก server) ผ่าน _G.UFO_SaveKeyState
+-- UFO HUB X — KEY UI (v18+, full drop-in)
+-- - API JSON: /verify?key=&uid=&place=  และ  /getkey
+-- - JSON parse ด้วย HttpService
+-- - จำอายุคีย์ผ่าน _G.UFO_SaveKeyState (48 ชม. หรือ expires_at จาก server)
 -- - ปุ่ม Get Key คัดลอกลิงก์พร้อม uid/place
--- - UI fade-out & destroy เมื่อสำเร็จ
+-- - รองรับหลายเซิร์ฟเวอร์ (failover & retry)
+-- - Fade-out แล้ว Destroy เมื่อสำเร็จ
 --========================================================
 
 -------------------- Services --------------------
@@ -14,27 +15,33 @@ local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local LP = Players.LocalPlayer
 
--------------------- CONFIG --------------------
+-------------------- THEME --------------------
 local LOGO_ID   = 112676905543996
 local ACCENT    = Color3.fromRGB(0,255,140)
 local BG_DARK   = Color3.fromRGB(10,10,10)
 local FG        = Color3.fromRGB(235,235,235)
 local SUB       = Color3.fromRGB(22,22,22)
+local RED       = Color3.fromRGB(210,60,60)
+local GREEN     = Color3.fromRGB(60,200,120)
 
+-------------------- LINKS --------------------
 local DISCORD_URL = "https://discord.gg/your-server"
 
--- ใส่ URL Render ของคุณตรงนี้ (เช่น: https://ufo-hub-x-server-key2.onrender.com)
-local GETKEY_URL  = "https://ufo-hub-x-key-umoq.onrender.com"
+-- ใส่ URL เซิร์ฟเวอร์ของคุณ (ลำดับตามความสำคัญ) — จะหมุนสำรองอัตโนมัติ
+local SERVER_BASES = {
+    "https://ufo-hub-x-key-umoq.onrender.com",         -- ตัวหลัก
+    -- "https://ufo-hub-x-server-key2.onrender.com",   -- ตัวสำรอง (ถ้ามี)
+}
 
--- อายุคีย์เริ่มต้น (กรณีคีย์ allow-list ภายในไฟล์นี้เอง)
+-- อายุคีย์เริ่มต้น (กรณี allow-list ภายในไฟล์นี้)
 local DEFAULT_TTL_SECONDS = 48 * 3600 -- 48 ชั่วโมง
 
 ----------------------------------------------------------------
 -- Allow-list คีย์พิเศษ (ผ่านแน่)
 ----------------------------------------------------------------
 local ALLOW_KEYS = {
-    ["JJJMAX"]                 = { permanent = false, reusable = true,  ttl = DEFAULT_TTL_SECONDS },
-    ["GMPANUPHONGARTPHAIRIN"]  = { permanent = false, reusable = true,  ttl = DEFAULT_TTL_SECONDS },
+    ["JJJMAX"]                 = { reusable = true,  ttl = DEFAULT_TTL_SECONDS },
+    ["GMPANUPHONGARTPHAIRIN"]  = { reusable = true,  ttl = DEFAULT_TTL_SECONDS },
 }
 
 ----------------------------------------------------------------
@@ -43,16 +50,12 @@ local ALLOW_KEYS = {
 local function http_get(url)
     if http and http.request then
         local ok, res = pcall(http.request, {Url=url, Method="GET"})
-        if ok and res and (res.Body or res.body) then
-            return true, (res.Body or res.body)
-        end
+        if ok and res and (res.Body or res.body) then return true, (res.Body or res.body) end
         return false, "executor_http_request_failed"
     end
     if syn and syn.request then
         local ok, res = pcall(syn.request, {Url=url, Method="GET"})
-        if ok and res and (res.Body or res.body) then
-            return true, (res.Body or res.body)
-        end
+        if ok and res and (res.Body or res.body) then return true, (res.Body or res.body) end
         return false, "syn_request_failed"
     end
     local ok, body = pcall(function() return game:HttpGet(url) end)
@@ -66,6 +69,22 @@ local function http_json_get(url)
     local okj, data = pcall(function() return HttpService:JSONDecode(tostring(body)) end)
     if not okj then return false, nil, "json_error" end
     return true, data, nil
+end
+
+-- ลองทีละ SERVER_BASE + retry/backoff เผื่อ Render ตื่นช้า
+local function json_get_with_failover(path_qs)
+    local last_err = "no_servers"
+    for _, base in ipairs(SERVER_BASES) do
+        local url = (base..path_qs)
+        -- 3 รอบต่อเซิร์ฟเวอร์: 0s / 0.6s / 1.2s
+        for i=0,2 do
+            if i>0 then task.wait(0.6*i) end
+            local ok, data, err = http_json_get(url)
+            if ok and data then return true, data end
+            last_err = err or "http_error"
+        end
+    end
+    return false, nil, last_err
 end
 
 ----------------------------------------------------------------
@@ -85,18 +104,17 @@ end
 
 ----------------------------------------------------------------
 -- ตรวจคีย์กับ Server (JSON)
--- server ควรตอบ: { ok:true, valid:true/false, expires_at:<unix>, reason:"..." }
+-- server ตอบ: { ok:true, valid:true/false, expires_at:<unix>, reason:"..." }
 ----------------------------------------------------------------
 local function verifyWithServer(k)
     local uid   = tostring(LP and LP.UserId or "")
     local place = tostring(game.PlaceId or "")
-    local url = string.format("%s/verify?key=%s&uid=%s&place=%s",
-        GETKEY_URL,
+    local qs = string.format("/verify?key=%s&uid=%s&place=%s",
         HttpService:UrlEncode(k),
         HttpService:UrlEncode(uid),
         HttpService:UrlEncode(place)
     )
-    local ok, data = http_json_get(url)
+    local ok, data = json_get_with_failover(qs)
     if not ok or not data then
         return false, "server_unreachable", nil
     end
@@ -108,7 +126,9 @@ local function verifyWithServer(k)
     end
 end
 
--------------------- Helpers (UI) --------------------
+----------------------------------------------------------------
+-- UI Helpers
+----------------------------------------------------------------
 local function safeParent(gui)
     local ok=false
     if syn and syn.protect_gui then pcall(function() syn.protect_gui(gui) end) end
@@ -149,7 +169,7 @@ local panel = make("Frame", {
     make("UIStroke",{Color=ACCENT, Thickness=2, Transparency=0.1})
 })
 
--- ปุ่มปิด (คงไว้)
+-- ปุ่มปิด (แค่ปิด ไม่ไปหน้า Download)
 local btnClose = make("TextButton", {
     Parent=panel, Text="X", Font=Enum.Font.GothamBold, TextSize=20, TextColor3=Color3.new(1,1,1),
     AutoButtonColor=false, BackgroundColor3=Color3.fromRGB(210,35,50),
@@ -226,9 +246,6 @@ local keyBox = make("TextBox", {
 })
 
 -------------------- SUBMIT BUTTON --------------------
-local RED   = Color3.fromRGB(210,60,60)
-local GREEN = Color3.fromRGB(60,200,120)
-
 local btnSubmit = make("TextButton", {
     Parent=panel, Text="🔒  Submit Key", Font=Enum.Font.GothamBlack, TextSize=20,
     TextColor3=Color3.new(1,1,1), AutoButtonColor=false,
@@ -341,7 +358,7 @@ end)
 refreshSubmit()
 keyBox.FocusLost:Connect(function(enter) if enter then btnSubmit:Activate() end end)
 
--- รวมการแจ้งผิด
+-- รวม error
 local function forceErrorUI(mainText, toastText)
     tween(btnSubmit, {BackgroundColor3 = Color3.fromRGB(255,80,80)}, .08)
     btnSubmit.Text = mainText or "❌ Invalid Key"
@@ -406,9 +423,9 @@ local function doSubmit()
     _G.UFO_HUBX_KEY_OK = true
     _G.UFO_HUBX_KEY    = k
 
-    -- ให้ Boot Loader บันทึก state (จะไม่ขึ้น Key UI จนกว่าจะหมดอายุ)
+    -- สำคัญ: ส่งให้ Boot Loader บันทึก state (เพื่อข้าม Key UI จนหมดอายุ)
     if _G.UFO_SaveKeyState and expires_at then
-        pcall(_G.UFO_SaveKeyState, k, expires_at, false) -- permanent=false
+        pcall(_G.UFO_SaveKeyState, k, tonumber(expires_at) or (os.time()+DEFAULT_TTL_SECONDS), false)
     end
 
     task.delay(0.15, function()
@@ -418,7 +435,7 @@ end
 btnSubmit.MouseButton1Click:Connect(doSubmit)
 btnSubmit.Activated:Connect(doSubmit)
 
--------------------- GET KEY (คัดลอกลิงก์พร้อม uid/place) --------------------
+-------------------- GET KEY (ลิงก์พร้อม uid/place) --------------------
 local btnGetKey = make("TextButton", {
     Parent=panel, Text="🔐  Get Key", Font=Enum.Font.GothamBold, TextSize=18,
     TextColor3=Color3.new(1,1,1), AutoButtonColor=false,
@@ -431,8 +448,9 @@ local btnGetKey = make("TextButton", {
 btnGetKey.MouseButton1Click:Connect(function()
     local uid   = tostring(LP and LP.UserId or "")
     local place = tostring(game.PlaceId or "")
+    local base  = SERVER_BASES[1] or ""
     local link  = string.format("%s/getkey?uid=%s&place=%s",
-        GETKEY_URL,
+        base,
         HttpService:UrlEncode(uid),
         HttpService:UrlEncode(place)
     )
