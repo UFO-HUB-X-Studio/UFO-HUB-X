@@ -231,6 +231,17 @@ make("TextLabel", {
     Text="KEY SYSTEM", TextColor3=ACCENT, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=6
 }, {})
 
+-- [ADD] server status pill (มุมขวาเฮดเดอร์)
+local statusPill = make("TextLabel", {
+    Parent=head, BackgroundTransparency=0.2, BackgroundColor3=Color3.fromRGB(26,26,26),
+    Size=UDim2.new(0,140,0,26), Position=UDim2.new(1,-150,0,21),
+    Font=Enum.Font.Gotham, TextSize=14, Text="• checking…", TextColor3=Color3.fromRGB(220,220,220),
+    ZIndex=6
+},{
+    make("UICorner",{CornerRadius=UDim.new(0,8)}),
+    make("UIStroke",{Color=ACCENT, Transparency=0.7})
+})
+
 -------------------- TITLE --------------------
 local titleGroup = make("Frame", {
     Parent=panel, BackgroundTransparency=1,
@@ -368,7 +379,13 @@ local function fadeOutAndDestroy()
         end)
     end
     TS:Create(panel, TweenInfo.new(0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 1}):Play()
-    task.delay(0.22, function() if gui and gui.Parent then gui:Destroy() end end)
+    task.delay(0.22, function()
+        if _G.UFOX_KEEP_UI then
+            gui.Enabled = false
+        else
+            if gui and gui.Parent then gui:Destroy() end
+        end
+    end)
 end
 
 -- Submit states
@@ -428,13 +445,13 @@ local function doSubmit()
     if allowed then
         valid = true
         expires_at = os.time() + (tonumber(meta.ttl) or DEFAULT_TTL_SECONDS)
-        print("[UFO-HUB-X] allowed key:", nk, "exp:", expires_at)
+        log("allowed key:", nk, "exp:", expires_at)
     else
         valid, reason, expires_at = verifyWithServer(k)
         if valid then
-            print("[UFO-HUB-X] server verified key:", k, "exp:", expires_at)
+            log("server verified key:", k, "exp:", expires_at)
         else
-            print("[UFO-HUB-X] key invalid:", k, "reason:", tostring(reason))
+            log("key invalid:", k, "reason:", tostring(reason))
         end
     end
 
@@ -469,7 +486,7 @@ end
 btnSubmit.MouseButton1Click:Connect(doSubmit)
 btnSubmit.Activated:Connect(doSubmit)
 
--- ------------------- GET KEY (ลิงก์พร้อม uid/place) --------------------
+-------------------- GET KEY (ลิงก์พร้อม uid/place) --------------------
 local btnGetKey = make("TextButton", {
     Parent=panel, Text="🔐  Get Key", Font=Enum.Font.GothamBold, TextSize=18,
     TextColor3=Color3.new(1,1,1), AutoButtonColor=false,
@@ -492,148 +509,153 @@ btnGetKey.MouseButton1Click:Connect(function()
     )
     setClipboard(link)
     btnGetKey.Text = "✅ Link copied!"
-    task.delay(1.5,function() btnGetKey.Text="🔐  Get Key" end)
+    task.delay(1.5, function() btnGetKey.Text = "🔐  Get Key" end)
 end)
 
 -- [ADD] ปุ่มเสริม: เปิดหน้า UI จริง + ปุ่ม Copy API แยก
-local extraRow = make("Frame", {
-    Parent=panel, BackgroundTransparency=1, ZIndex=5,
-    Size=UDim2.new(1,-56,0,40), Position=UDim2.new(0,28,0,324+44+8)
-},{
+    local extraRow = make("Frame", {
+        Parent = panel, BackgroundTransparency = 1, ZIndex = 5,
+        Size = UDim2.new(1, -56, 0, 40), Position = UDim2.new(0, 28, 0, 324+44+8)
+    },{})
+
     make("UIListLayout", {
-        FillDirection=Enum.FillDirection.Horizontal,
-        HorizontalAlignment=Enum.HorizontalAlignment.Left,
-        VerticalAlignment=Enum.VerticalAlignment.Center,
-        Padding=UDim.new(0,10)
+        Parent = extraRow,
+        FillDirection = Enum.FillDirection.Horizontal,
+        HorizontalAlignment = Enum.HorizontalAlignment.Left,
+        VerticalAlignment   = Enum.VerticalAlignment.Center,
+        Padding = UDim.new(0, 10)
+    },{})
+
+    -- ปุ่มเปิดหน้า UI จริง (จะต่อพารามิเตอร์ uid/place ให้เอง)
+    local btnOpenUi = make("TextButton", {
+        Parent = extraRow, ZIndex = 6,
+        Text = "🌐  Open Key UI", Font = Enum.Font.GothamBold, TextSize = 16,
+        TextColor3 = Color3.new(1,1,1), AutoButtonColor = false,
+        BackgroundColor3 = SUB, BorderSizePixel = 0,
+        Size = UDim2.new(0, 180, 0, 36)
+    },{
+        make("UICorner",{CornerRadius = UDim.new(0, 12)}),
+        make("UIStroke",{Color = ACCENT, Transparency = 0.55})
     })
-})
 
-local btnOpenUi = make("TextButton", {
-    Parent=extraRow, Text="🌐 Open Key UI", ZIndex=6,
-    Font=Enum.Font.GothamBold, TextSize=16,
-    TextColor3=Color3.new(1,1,1), AutoButtonColor=false,
-    BackgroundColor3=SUB, BorderSizePixel=0, Size=UDim2.new(0,180,0,38)
-},{
-    make("UICorner",{CornerRadius=UDim.new(0,10)}),
-    make("UIStroke",{Color=ACCENT, Transparency=0.55})
-})
-btnOpenUi.MouseButton1Click:Connect(function()
-    -- ต้องมี makeUiLink() ประกาศไว้ก่อนหน้า (ตามโค้ดเต็มที่ให้ไป)
-    local uiUrl = makeUiLink()
-    local opened = openExternal(uiUrl)
-    if not opened then setClipboard(uiUrl) end
-    btnOpenUi.Text = opened and "✅ Opened UI" or "✅ Copied UI Link"
-    task.delay(1.4, function() btnOpenUi.Text = "🌐 Open Key UI" end)
-end)
-
-local btnCopyApi = make("TextButton", {
-    Parent=extraRow, Text="📋 Copy API Link", ZIndex=6,
-    Font=Enum.Font.Gotham, TextSize=14,
-    TextColor3=Color3.new(1,1,1), AutoButtonColor=false,
-    BackgroundColor3=SUB, BorderSizePixel=0, Size=UDim2.new(0,160,0,38)
-},{
-    make("UICorner",{CornerRadius=UDim.new(0,10)}),
-    make("UIStroke",{Color=ACCENT, Transparency=0.7})
-})
-btnCopyApi.MouseButton1Click:Connect(function()
-    local uid   = tostring(LP and LP.UserId or "")
-    local place = tostring(game.PlaceId or "")
-    local base  = SERVER_BASES[1] or ""
-    local api   = string.format("%s/getkey?uid=%s&place=%s",
-        base, HttpService:UrlEncode(uid), HttpService:UrlEncode(place))
-    setClipboard(api)
-    btnCopyApi.Text = "✅ Copied!"
-    task.delay(1.2, function() btnCopyApi.Text = "📋 Copy API Link" end)
-end)
-
-         end
-
--------------------- SUPPORT --------------------
-local supportRow = make("Frame", {
-    Parent=panel, AnchorPoint = Vector2.new(0.5,1),
-    Position = UDim2.new(0.5,0,1,-18), Size = UDim2.new(1,-56,0,24),
-    BackgroundTransparency = 1
-}, {})
-make("UIListLayout", {
-    Parent = supportRow, FillDirection = Enum.FillDirection.HORIZONTAL,
-    HorizontalAlignment = Enum.HorizontalAlignment.Center,
-    VerticalAlignment   = Enum.VerticalAlignment.Center,
-    SortOrder = Enum.SortOrder.LayoutOrder,
-    Padding = UDim.new(0,6)
-}, {})
-make("TextLabel", {
-    Parent=supportRow, LayoutOrder=1, BackgroundTransparency=1,
-    Font=Enum.Font.Gotham, TextSize=16, Text="Need support?",
-    TextColor3=Color3.fromRGB(200,200,200), AutomaticSize=Enum.AutomaticSize.X
-}, {})
-local btnDiscord = make("TextButton", {
-    Parent=supportRow, LayoutOrder=2, BackgroundTransparency=1,
-    Font=Enum.Font.GothamBold, TextSize=16, Text="Join the Discord",
-    TextColor3=ACCENT, AutomaticSize=Enum.AutomaticSize.X
-},{})
-btnDiscord.MouseButton1Click:Connect(function()
-    setClipboard(DISCORD_URL)
-    btnDiscord.Text = "✅ Link copied!"
-    task.delay(1.5,function() btnDiscord.Text="Join the Discord" end)
-end)
-
--------------------- Server Status (ใต้ปุ่ม) --------------------
-local srvStatus = make("TextLabel", {
-    Parent = panel, BackgroundTransparency = 1, ZIndex=8,
-    Size = UDim2.new(1,-56,0,18), Position = UDim2.new(0,28,1,-44),
-    Font = Enum.Font.Gotham, TextSize = 13, TextXAlignment = Enum.TextXAlignment.Left,
-    Text = "Server: checking...", TextColor3 = Color3.fromRGB(160,160,160)
-},{})
-task.defer(function()
-    local ok, data = json_get_with_failover("/status")
-    if ok and data and data.ok then
-        srvStatus.Text = "Server: online ✓"
-        srvStatus.TextColor3 = Color3.fromRGB(120,255,170)
-    else
-        srvStatus.Text = "Server: offline (จะลองใหม่ตอนยืนยัน/กดปุ่ม)"
-        srvStatus.TextColor3 = Color3.fromRGB(255,150,150)
-    end
-end)
-
--------------------- Reopen Mini Button (ถ้าเผลอปิด UI) --------------------
-local reopen = make("TextButton", {
-    Parent = gui, ZIndex = 999999,
-    Text = "UFO Key", Font = Enum.Font.GothamBold, TextSize = 12,
-    TextColor3 = Color3.new(1,1,1), AutoButtonColor = true,
-    BackgroundColor3 = Color3.fromRGB(25,25,25), BorderSizePixel = 0,
-    Size = UDim2.fromOffset(76,24), Position = UDim2.new(1,-86,0,8)
-},{
-    make("UICorner",{CornerRadius=UDim.new(0,8)}),
-    make("UIStroke",{Color=ACCENT, Transparency=0.4})
-})
-reopen.MouseButton1Click:Connect(function()
-    if panel then
-        panel.Visible = true
-        TS:Create(panel, TweenInfo.new(.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {BackgroundTransparency = 0}):Play()
-    end
-end)
-
--------------------- Open Animation --------------------
-panel.Position = UDim2.fromScale(0.5,0.5) + UDim2.fromOffset(0,14)
-tween(panel, {Position = UDim2.fromScale(0.5,0.5)}, .18)
-
--------------------- Watchdog: ensure on top --------------------
-task.defer(function()
-    for _=1,80 do
-        if gui then
-            if not gui.Parent then
-                pcall(function()
-                    if gethui then gui.Parent = gethui() else gui.Parent = CG end
-                end)
-            end
-            gui.Enabled = true
-            gui.DisplayOrder = 999999
-            gui.IgnoreGuiInset = true
-            if _G.UFOX_FORCE_TOPMOST and gui.Parent ~= CG and not gethui then
-                pcall(function() gui.Parent = CG end)
-            end
+    btnOpenUi.MouseButton1Click:Connect(function()
+        local url = makeUiLink()
+        local opened = openExternal(url) -- พยายามเปิดเบราว์เซอร์; ถ้าเปิดไม่ได้จะคัดลอกให้
+        if opened then
+            btnOpenUi.Text = "✅ UI opened!"
+        else
+            btnOpenUi.Text = "📋 Copied UI link!"
         end
-        task.wait(0.2)
+        task.delay(1.6, function() btnOpenUi.Text = "🌐  Open Key UI" end)
+    end)
+
+    -- ปุ่มคัดลอก API link แยกต่างหาก
+    local btnCopyApi = make("TextButton", {
+        Parent = extraRow, ZIndex = 6,
+        Text = "📋  Copy API Link", Font = Enum.Font.GothamBold, TextSize = 16,
+        TextColor3 = Color3.new(1,1,1), AutoButtonColor = false,
+        BackgroundColor3 = SUB, BorderSizePixel = 0,
+        Size = UDim2.new(0, 180, 0, 36)
+    },{
+        make("UICorner",{CornerRadius = UDim.new(0, 12)}),
+        make("UIStroke",{Color = ACCENT, Transparency = 0.55})
+    })
+
+    btnCopyApi.MouseButton1Click:Connect(function()
+        local uid   = tostring(LP and LP.UserId or "")
+        local place = tostring(game.PlaceId or "")
+        local base  = SERVER_BASES[1] or ""
+        local link  = string.format("%s/getkey?uid=%s&place=%s",
+            base,
+            HttpService:UrlEncode(uid),
+            HttpService:UrlEncode(place)
+        )
+        setClipboard(link)
+        btnCopyApi.Text = "✅ Copied!"
+        task.delay(1.4, function() btnCopyApi.Text = "📋  Copy API Link" end)
+    end)
+
+    -------------------- SUPPORT --------------------
+    local supportRow = make("Frame", {
+        Parent = panel, AnchorPoint = Vector2.new(0.5,1),
+        Position = UDim2.new(0.5, 0, 1, -18), Size = UDim2.new(1, -56, 0, 24),
+        BackgroundTransparency = 1
+    },{})
+
+    make("UIListLayout", {
+        Parent = supportRow,
+        FillDirection = Enum.FillDirection.Horizontal,
+        HorizontalAlignment = Enum.HorizontalAlignment.Center,
+        VerticalAlignment   = Enum.VerticalAlignment.Center,
+        Padding = UDim.new(0, 8)
+    },{})
+
+    make("TextLabel", {
+        Parent = supportRow, LayoutOrder = 1, BackgroundTransparency = 1,
+        Font = Enum.Font.Gotham, TextSize = 16, Text = "Need support?",
+        TextColor3 = Color3.fromRGB(200,200,200), AutomaticSize = Enum.AutomaticSize.X
+    },{})
+
+    local btnDiscord = make("TextButton", {
+        Parent = supportRow, LayoutOrder = 2, BackgroundTransparency = 1,
+        Font = Enum.Font.GothamBold, TextSize = 16, Text = "Join the Discord",
+        TextColor3 = ACCENT, AutomaticSize = Enum.AutomaticSize.X
+    },{})
+    btnDiscord.MouseButton1Click:Connect(function()
+        setClipboard(DISCORD_URL)
+        btnDiscord.Text = "✅ Link copied!"
+        task.delay(1.5, function() btnDiscord.Text = "Join the Discord" end)
+    end)
+
+    -------------------- WATCHDOG: ติดบนสุด / อยู่ใน CoreGui --------------------
+    task.spawn(function()
+        while gui and gui.Parent do
+            pcall(function()
+                if _G.UFOX_FORCE_TOPMOST then
+                    gui.DisplayOrder = 999999
+                    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+                end
+                if gui.Parent ~= CG then
+                    safeParent(gui)
+                end
+            end)
+            task.wait(2)
+        end
+    end)
+
+    -------------------- STATUS PING (/status) --------------------
+    local function setPill(text, good)
+        statusPill.Text = text
+        if good == nil then
+            statusPill.TextColor3 = Color3.fromRGB(220,220,220)
+            statusPill.BackgroundColor3 = Color3.fromRGB(26,26,26)
+        elseif good then
+            statusPill.TextColor3 = Color3.fromRGB(170,255,190)
+            statusPill.BackgroundColor3 = Color3.fromRGB(22,40,26)
+        else
+            statusPill.TextColor3 = Color3.fromRGB(255,180,180)
+            statusPill.BackgroundColor3 = Color3.fromRGB(45,22,22)
+        end
     end
-end)
-```0
+
+    local function pingStatus()
+        local ok, data = json_get_with_failover("/status")
+        if ok and data and data.ok then
+            setPill("• online", true)
+        else
+            setPill("• offline", false)
+        end
+    end
+
+    -- เรียกทันทีและวนทุก 15 วินาที
+    task.spawn(function()
+        pingStatus()
+        while gui and gui.Parent do
+            task.wait(15)
+            pingStatus()
+        end
+    end)
+
+    -------------------- Open Animation --------------------
+    panel.Position = UDim2.fromScale(0.5,0.5) + UDim2.fromOffset(0,14)
+    tween(panel, {Position = UDim2.fromScale(0.5,0.5)}, .18)
