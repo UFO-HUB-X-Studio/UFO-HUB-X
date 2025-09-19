@@ -1,10 +1,9 @@
 --========================================================
 -- [ADD-ONLY PRELUDE] UFO HUB X — Safe Environment Prep
 -- - โหลดเกมให้จบ, รอ LocalPlayer / PlayerGui
--- - เตรียม util สำหรับ parent แบบทนทุกเอ็กซิคิวเตอร์
--- - เพิ่มแต่ไม่ลบของเดิม
+-- - util สำหรับ parent ที่ทนทุก executor
+-- - ไม่ลบของเดิม (เพิ่มเท่านั้น)
 --========================================================
-
 local Players = game:GetService("Players")
 local CG      = game:GetService("CoreGui")
 
@@ -12,7 +11,6 @@ pcall(function()
     if not game:IsLoaded() then game.Loaded:Wait() end
 end)
 
--- ปลอดภัย: พยายามหา LocalPlayer นานหน่อย
 local LP = Players.LocalPlayer
 local t0 = os.clock()
 repeat
@@ -37,7 +35,6 @@ _G.__UFO_PREP_PG = _getPG(6)
 _G.__UFO_SOFT_PARENT = function(gui)
     if not gui then return end
     pcall(function()
-        -- ตั้งค่าพื้นฐานให้ GUI ทนทานต่อ executor
         if gui:IsA("ScreenGui") then
             gui.Enabled = true
             gui.DisplayOrder = 999999
@@ -58,7 +55,6 @@ _G.__UFO_SOFT_PARENT = function(gui)
     end
 end
 
--- ถ้ามี GUI เก่าอยู่ ให้ย้ายไป parent ที่ทนกว่า (ไม่ลบ)
 pcall(function()
     local old = CG:FindFirstChild("UFOHubX_KeyUI")
     if old and old:IsA("ScreenGui") then
@@ -224,15 +220,14 @@ end
 local function setClipboard(s) if setclipboard then pcall(setclipboard, s) end end
 
 -------------------- ROOT --------------------
--- หากมี GUI เดิมที่ชื่อเดียวกัน ให้ย้าย parent แล้วสร้างใหม่ทับ (ไม่ลบของเดิม แต่ให้ GUI ใหม่ใช้งาน)
-local existing = CG:FindFirstChild("UFOHubX_KeyUI")
-if existing and existing:IsA("ScreenGui") then
-    -- ถ้ามี GUI เก่า ให้ทำ invisible ก่อนแล้วย้าย parent
-    pcall(function()
+-- ถ้ามี GUI เดิมชื่อเดียวกัน ให้ย้าย parent ให้ปลอดภัย (ไม่ลบ)
+pcall(function()
+    local existing = CG:FindFirstChild("UFOHubX_KeyUI")
+    if existing and existing:IsA("ScreenGui") then
         existing.Enabled = false
         if _G.__UFO_SOFT_PARENT then _G.__UFO_SOFT_PARENT(existing) end
-    end)
-end
+    end
+end)
 
 local gui = Instance.new("ScreenGui")
 gui.Name = "UFOHubX_KeyUI"
@@ -240,6 +235,37 @@ gui.IgnoreGuiInset = true
 gui.ResetOnSpawn = false
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 safeParent(gui)
+
+-- [ADD-ONLY] Watchdog + Debug badge + parent fallback
+do
+    local dbg = Instance.new("TextLabel")
+    dbg.Name = "UFO_Debug"
+    dbg.BackgroundTransparency = 1
+    dbg.TextColor3 = Color3.fromRGB(255,255,255)
+    dbg.Font = Enum.Font.Gotham
+    dbg.Text = "[UFO] UI mounted"
+    dbg.TextSize = 14
+    dbg.Position = UDim2.new(0, 8, 0, 8)
+    dbg.Size = UDim2.fromOffset(220, 20)
+    dbg.Parent = gui
+
+    task.spawn(function()
+        while gui do
+            if not gui.Parent then
+                if _G.__UFO_SOFT_PARENT then _G.__UFO_SOFT_PARENT(gui) else pcall(function() gui.Parent = CG end) end
+            end
+            if gui and gui.Enabled == false then pcall(function() gui.Enabled = true end) end
+            task.wait(0.25)
+        end
+    end)
+
+    task.delay(0.2, function()
+        if not gui.Parent then
+            local pg = (_G.__UFO_PREP_PG) or (LP2 and LP2:FindFirstChildOfClass("PlayerGui"))
+            if pg then pcall(function() gui.Parent = pg end) end
+        end
+    end)
+end
 
 -------------------- PANEL --------------------
 local PANEL_W, PANEL_H = 740, 430
@@ -253,7 +279,7 @@ local panel = make("Frame", {
     make("UIStroke",{Color=ACCENT, Thickness=2, Transparency=0.1})
 })
 
--- ปุ่มปิด (แค่ปิด ไม่ไปหน้า Download)
+-- ปุ่มปิด
 local btnClose = make("TextButton", {
     Parent=panel, Text="X", Font=Enum.Font.GothamBold, TextSize=20, TextColor3=Color3.new(1,1,1),
     AutoButtonColor=false, BackgroundColor3=Color3.fromRGB(210,35,50),
@@ -262,7 +288,6 @@ local btnClose = make("TextButton", {
     make("UICorner",{CornerRadius=UDim.new(0,12)})
 })
 btnClose.MouseButton1Click:Connect(function()
-    -- destroy GUI safely
     pcall(function() if gui and gui.Parent then gui:Destroy() end end)
 end)
 
@@ -460,8 +485,9 @@ local function forceErrorUI(mainText, toastText)
     end)
 end
 
+
 ----------------------------------------------------------------
--- Submit flow
+-- Submit flow (ต่อจาก forceErrorUI)
 ----------------------------------------------------------------
 local function doSubmit()
     if submitting then return end
@@ -510,7 +536,7 @@ local function doSubmit()
     _G.UFO_HUBX_KEY_OK = true
     _G.UFO_HUBX_KEY    = k
 
-    -- สำคัญ: ส่งให้ Boot Loader บันทึก state (เพื่อข้าม Key UI จนหมดอายุ)
+    -- สำคัญ: ให้ตัว boot/loader ภายนอกจำอายุคีย์
     if _G.UFO_SaveKeyState and expires_at then
         pcall(_G.UFO_SaveKeyState, k, tonumber(expires_at) or (os.time()+DEFAULT_TTL_SECONDS), false)
     end
@@ -520,9 +546,14 @@ local function doSubmit()
     end)
 end
 
--- bind ปุ่มกด submit
+-- Hook ปุ่มกด (รองรับหลาย executor)
 btnSubmit.MouseButton1Click:Connect(doSubmit)
 btnSubmit.Activated:Connect(doSubmit)
+btnSubmit.InputBegan:Connect(function(inp)
+    if inp.UserInputType == Enum.UserInputType.MouseButton1 or inp.KeyCode == Enum.KeyCode.Return then
+        pcall(doSubmit)
+    end
+end)
 
 -------------------- GET KEY (ลิงก์พร้อม uid/place) --------------------
 local btnGetKey = make("TextButton", {
@@ -539,13 +570,21 @@ btnGetKey.MouseButton1Click:Connect(function()
     local place = tostring(game.PlaceId or "")
     local base  = SERVER_BASES[1] or ""
     local link  = string.format("%s/getkey?uid=%s&place=%s",
-        base,
-        HttpService:UrlEncode(uid),
-        HttpService:UrlEncode(place)
+        base, HttpService:UrlEncode(uid), HttpService:UrlEncode(place)
     )
     setClipboard(link)
     btnGetKey.Text = "✅ Link copied!"
     task.delay(1.5,function() btnGetKey.Text="🔐  Get Key" end)
+end)
+-- คลิกขวา = ก็อปซ้ำสำรอง
+btnGetKey.MouseButton2Click:Connect(function()
+    local uid   = tostring(LP2 and LP2.UserId or "")
+    local place = tostring(game.PlaceId or "")
+    local base  = SERVER_BASES[1] or ""
+    local link  = string.format("%s/getkey?uid=%s&place=%s",
+        base, HttpService:UrlEncode(uid), HttpService:UrlEncode(place)
+    )
+    setClipboard(link); showToast("คัดลอกลิงก์แล้ว", true)
 end)
 
 -------------------- SUPPORT --------------------
@@ -579,3 +618,15 @@ end)
 -------------------- Open Animation --------------------
 panel.Position = UDim2.fromScale(0.5,0.5) + UDim2.fromOffset(0,14)
 tween(panel, {Position = UDim2.fromScale(0.5,0.5)}, .18)
+
+-- Auto ping เซิร์ฟเวอร์ตอนเปิด เพื่อบอกสถานะทันที
+task.spawn(function()
+    setStatus("กำลังเช็คเซิร์ฟเวอร์...", nil)
+    local ok, data = json_get_with_failover("/ping")
+    if ok and data and (data.ok == true or data.status == "ok") then
+        setStatus("เซิร์ฟเวอร์พร้อม ✅", true)
+    else
+        setStatus("เซิร์ฟเวอร์ตื่นช้า/ไม่ตอบ ลองใหม่ได้", false)
+        showToast("เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ตอนนี้", false)
+    end
+end)
