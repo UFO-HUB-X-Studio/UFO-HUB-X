@@ -30,7 +30,9 @@ local GETKEY_URL = "https://<your-gateway>.onrender.com"
 
 -- ถ้า UI รองรับหลายโดเมนเป็นตาราง
 local SERVER_BASES = {
-  "https://<your-gateway>.onrender.com"
+    "https://ufo-hub-x-server-key.onrender.com",  -- ตัวกลาง (หลัก)
+    "https://ufo-hub-x-key1.onrender.com",        -- สำรอง
+    "https://ufo-hub-x-key2.onrender.com"         -- สำรอง
 }
 
 -- อายุคีย์เริ่มต้น (กรณี allow-list)
