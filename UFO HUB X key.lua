@@ -1,9 +1,10 @@
 --========================================================
--- UFO HUB X — KEY UI (v18.1, single file, add-only)
+-- UFO HUB X — KEY UI (v18.1, fixed GetKey, single file)
 -- - JSON verify (format=json) + fallback text/plain ("VALID"/"INVALID")
 -- - Failover หลายเซิร์ฟเวอร์ + retry
 -- - เก็บอายุคีย์ผ่าน _G.UFO_SaveKeyState (ถ้ามี)
 -- - Fade-out เมื่อสำเร็จ
+-- - FIX: Get Key จะคัดลอกลิงก์จาก "ตัวกลาง" เท่านั้น (ไม่เกิด <your-gateway>)
 --========================================================
 
 -------------------- Services --------------------
@@ -25,12 +26,12 @@ local GREEN     = Color3.fromRGB(60,200,120)
 -------------------- LINKS / SERVERS --------------------
 local DISCORD_URL = "https://discord.gg/your-server"
 
--- ถ้า UI คุณมีตัวแปรเดียว
+-- *** ใส่โดเมน "ตัวกลาง (server-key)" ของคุณตรงนี้ ให้เป็นของจริง ***
 local GETKEY_URL = "https://ufo-hub-x-server-key.onrender.com"
 
--- ถ้า UI รองรับหลายโดเมนเป็นตาราง
+-- ถ้าจะให้ Verify ยิงสำรองหลายโดเมนได้ (ตัวกลาง + key1 + key2)
 local SERVER_BASES = {
-    "https://ufo-hub-x-server-key.onrender.com",  -- ตัวกลาง (หลัก)
+    "https://ufo-hub-x-server-key.onrender.com",  -- กลาง (หลัก)
     "https://ufo-hub-x-key1.onrender.com",        -- สำรอง
     "https://ufo-hub-x-key2.onrender.com"         -- สำรอง
 }
@@ -110,8 +111,7 @@ local function isAllowedKey(k)
 end
 
 ----------------------------------------------------------------
--- (เดิม) ตรวจคีย์กับ Server แบบ JSON อย่างเดียว
---  *คงไว้ ไม่ลบ* — แต่ใน flow จะใช้ตัวใหม่ verifySmartWithFailover แทน
+-- Verify JSON only (คงไว้)
 ----------------------------------------------------------------
 local function verifyWithServer_JSONOnly(k)
     local uid   = tostring(LP and LP.UserId or "")
@@ -125,31 +125,34 @@ local function verifyWithServer_JSONOnly(k)
     if not ok or not data then
         return false, "server_unreachable", nil
     end
-    if data.ok and data.valid then
-        local exp = tonumber(data.expires_at) or (os.time() + DEFAULT_TTL_SECONDS)
-        return true, nil, exp
+    if (data.ok == nil and data.valid ~= nil) or data.ok then
+        -- รองรับทั้ง {valid:true} และ {ok:true,valid:true}
+        if data.valid then
+            local exp = tonumber(data.expires_at) or (os.time() + DEFAULT_TTL_SECONDS)
+            return true, nil, exp
+        else
+            return false, tostring(data.reason or "invalid"), nil
+        end
     else
         return false, tostring(data.reason or "invalid"), nil
     end
 end
 
 ----------------------------------------------------------------
--- (ใหม่) ตรวจคีย์แบบ Smart: JSON ก่อน → ถ้าไม่ได้ fallback เป็น text/plain
--- เซิร์ฟเวอร์ตอบ text ว่า "VALID" / "INVALID"
+-- Smart verify: JSON → ถ้าเน่า fallback text/plain ("VALID"/"INVALID")
 ----------------------------------------------------------------
 local function verifySmartWithFailover(k)
-    -- 1) ลอง JSON ก่อน (format=json)
+    -- 1) JSON ก่อน
     local okJ, reasonJ, expJ = verifyWithServer_JSONOnly(k)
     if okJ ~= nil then
         if okJ then return true, nil, expJ else
-            -- ถ้า server ตอบ invalid ชัดเจน ก็คืนเลย ไม่ต้อง fallback
             if reasonJ ~= "server_unreachable" and reasonJ ~= "http_error" and reasonJ ~= "json_error" then
                 return false, reasonJ, nil
             end
         end
     end
 
-    -- 2) Fallback เป็น text/plain ("VALID"/"INVALID")
+    -- 2) text/plain fallback
     local uid   = tostring(LP and LP.UserId or "")
     local place = tostring(game.PlaceId or "")
     local qsBase = string.format("/verify?key=%s&uid=%s&place=%s",
@@ -167,9 +170,7 @@ local function verifySmartWithFailover(k)
             if ok and body then
                 local ans = trimUpper(body)
                 if ans == "VALID" then
-                    -- ถ้าได้โหมด text ไม่มี expires → ใส่ default ให้
-                    local exp = os.time() + DEFAULT_TTL_SECONDS
-                    return true, nil, exp
+                    return true, nil, os.time() + DEFAULT_TTL_SECONDS
                 elseif ans == "INVALID" then
                     return false, "invalid", nil
                 else
@@ -448,7 +449,6 @@ local function doSubmit()
         expires_at = os.time() + (tonumber(meta.ttl) or DEFAULT_TTL_SECONDS)
         print("[UFO-HUB-X] allowed key:", nk, "exp:", expires_at)
     else
-        -- ใช้ตัวใหม่: JSON → ถ้าไม่ได้ → text/plain
         valid, reason, expires_at = verifySmartWithFailover(k)
         if valid then
             print("[UFO-HUB-X] server verified key:", k, "exp:", expires_at)
@@ -497,53 +497,27 @@ local btnGetKey = make("TextButton", {
     make("UICorner",{CornerRadius=UDim.new(0,14)}),
     make("UIStroke",{Color=ACCENT, Transparency=0.6})
 })
+
 btnGetKey.MouseButton1Click:Connect(function()
     local uid   = tostring(LP and LP.UserId or "")
     local place = tostring(game.PlaceId or "")
-    local base  = SERVER_BASES[1] or ""
     local link  = string.format("%s/getkey?uid=%s&place=%s",
-        base,
+        GETKEY_URL,
         HttpService:UrlEncode(uid),
         HttpService:UrlEncode(place)
     )
     setClipboard(link)
-    btnGetKey.Text = "✅ Link copied!"
-    task.delay(1.5, function() btnGetKey.Text = "🔐  Get Key" end)
+    setStatus("ลิงก์คัดลอกแล้ว → วางในเบราว์เซอร์เพื่อรับคีย์", true)
+    showToast("คัดลอกลิงก์แล้ว!", true)
 end)
 
--------------------- SUPPORT --------------------
-local supportRow = make("Frame", {
-    Parent=panel, AnchorPoint = Vector2.new(0.5,1),
-    Position = UDim2.new(0.5,0,1,-18), Size = UDim2.new(1,-56,0,24),
-    BackgroundTransparency = 1
+-------------------- FOOTER --------------------
+local footer = make("TextLabel", {
+    Parent=panel, BackgroundTransparency=1, Position=UDim2.new(0,0,1,-28),
+    Size=UDim2.new(1,0,0,20), Font=Enum.Font.Gotham, TextSize=13,
+    Text="Join our Discord: "..DISCORD_URL, TextColor3=Color3.fromRGB(180,180,180),
+    TextXAlignment=Enum.TextXAlignment.Center
 }, {})
 
-make("UIListLayout", {
-    Parent = supportRow,
-    FillDirection = Enum.FillDirection.HORIZONTAL,
-    HorizontalAlignment = Enum.HorizontalAlignment.Center,
-    VerticalAlignment   = Enum.VerticalAlignment.Center,
-    SortOrder = Enum.SortOrder.LayoutOrder,
-    Padding = UDim.new(0,6)
-}, {})
-
-make("TextLabel", {
-    Parent=supportRow, LayoutOrder=1, BackgroundTransparency=1,
-    Font=Enum.Font.Gotham, TextSize=16, Text="Need support?",
-    TextColor3=Color3.fromRGB(200,200,200), AutomaticSize=Enum.AutomaticSize.X
-}, {})
-
-local btnDiscord = make("TextButton", {
-    Parent=supportRow, LayoutOrder=2, BackgroundTransparency=1,
-    Font=Enum.Font.GothamBold, TextSize=16, Text="Join the Discord",
-    TextColor3=ACCENT, AutomaticSize=Enum.AutomaticSize.X
-},{})
-btnDiscord.MouseButton1Click:Connect(function()
-    setClipboard(DISCORD_URL)
-    btnDiscord.Text = "✅ Link copied!"
-    task.delay(1.5, function() btnDiscord.Text = "Join the Discord" end)
-end)
-
--------------------- Open Animation --------------------
-panel.Position = UDim2.fromScale(0.5,0.5) + UDim2.fromOffset(0,14)
-tween(panel, {Position = UDim2.fromScale(0.5,0.5)}, .18)
+-- done
+print("[UFO-HUB-X] Key UI Loaded ✅")
