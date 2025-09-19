@@ -1,8 +1,5 @@
 --========================================================
 -- [ADD-ONLY PRELUDE] UFO HUB X — Safe Environment Prep
--- - โหลดเกมให้จบ, รอ LocalPlayer / PlayerGui
--- - เตรียม util สำหรับ parent แบบทนทุกเอ็กซิคิวเตอร์
--- - ไม่แตะของเดิม (เพิ่มเท่านั้น)
 --========================================================
 local Players = game:GetService("Players")
 local CG      = game:GetService("CoreGui")
@@ -17,7 +14,7 @@ repeat
     LP = Players.LocalPlayer
     if LP then break end
     task.wait(0.05)
-until (os.clock() - t0) > 10
+until (os.clock() - t0) > 12
 
 local function _getPG(timeout)
     local pg, t1 = nil, os.clock()
@@ -53,13 +50,12 @@ _G.__UFO_SOFT_PARENT = function(gui)
     end
 end
 
--- ป้องกันสร้างซ้ำ (ไม่ลบของเดิม แค่ย้ายตัวเก่าให้อยู่ใต้ CoreGui ถ้ายังอยู่)
-do
+pcall(function()
     local old = CG:FindFirstChild("UFOHubX_KeyUI")
     if old and old:IsA("ScreenGui") then
         _G.__UFO_SOFT_PARENT(old)
     end
-end
+end)
 
 _G.__UFO_ENV_READY = true
 
@@ -75,7 +71,9 @@ _G.__UFO_ENV_READY = true
 
 -------------------- Services --------------------
 local TS   = game:GetService("TweenService")
+local CG   = game:GetService("CoreGui")
 local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
 local LP2 = Players.LocalPlayer or LP
 
 -------------------- THEME --------------------
@@ -559,60 +557,31 @@ panel.Position = UDim2.fromScale(0.5,0.5) + UDim2.fromOffset(0,14)
 tween(panel, {Position = UDim2.fromScale(0.5,0.5)}, .18)
 
 --========================================================
--- [ADD-ONLY POSTFIX] UFO HUB X — Hardened UI Boot + Watchdog
--- - บังคับ parent/visible/foreground
--- - watchdog ดึงกลับอัตโนมัติถ้าโดนถอด
--- - ฮ็อตคีย์เรียก UI กลับ (Ctrl+Shift+U)
+-- [ADD-ONLY POSTFIX] UI Watchdog + Bring-To-Front + Hotkey
 --========================================================
-pcall(function()
-    if _G.__UFO_SOFT_PARENT and gui and not gui.Parent then
-        _G.__UFO_SOFT_PARENT(gui)
-    end
-end)
-
-local function _ufoEnsureGuiParent()
-    if not gui then return end
-    if not gui.Parent then
+local function __ensureGui(gui_, panel_)
+    if not gui_ then return end
+    if not gui_.Parent then
         if _G.__UFO_SOFT_PARENT then
-            _G.__UFO_SOFT_PARENT(gui)
+            _G.__UFO_SOFT_PARENT(gui_)
         else
             pcall(function()
-                gui.Enabled = true
-                gui.DisplayOrder = 999999
-                gui.ResetOnSpawn = false
-                gui.IgnoreGuiInset = true
-                gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+                gui_.Enabled = true
+                gui_.DisplayOrder = 999999
+                gui_.ResetOnSpawn = false
+                gui_.IgnoreGuiInset = true
+                gui_.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+                gui_.Parent = game:GetService("CoreGui")
             end)
-            if syn and syn.protect_gui then pcall(function() syn.protect_gui(gui) end) end
-            local ok=false
-            if gethui then ok = pcall(function() gui.Parent = gethui() end) end
-            if (not ok) or (not gui.Parent) then
-                ok = pcall(function() gui.Parent = CG end)
-            end
-            if (not ok) or (not gui.Parent) then
-                local pg = Players.LocalPlayer and Players.LocalPlayer:FindFirstChildOfClass("PlayerGui")
-                if pg then pcall(function() gui.Parent = pg end) end
-            end
         end
     end
     pcall(function()
-        gui.Enabled = true
-        if panel then
-            panel.Visible = true
-            panel.Active  = true
-            panel.BackgroundTransparency = panel.BackgroundTransparency or 0
-        end
+        gui_.Enabled = true
+        if panel_ then panel_.Visible = true panel_.Active = true end
     end)
 end
 
-_ufoEnsureGuiParent()
-task.spawn(function()
-    for _=1,12 do
-        if not (gui and gui.Parent) then _ufoEnsureGuiParent() end
-        task.wait(0.2)
-    end
-end)
-
+-- ดัน DisplayOrder ให้อยู่บนสุด
 task.defer(function()
     if not gui then return end
     local parent = gui.Parent
@@ -628,54 +597,37 @@ task.defer(function()
     pcall(function() gui.DisplayOrder = math.max(maxDO + 1, 999999) end)
 end)
 
+-- กันโดนถอด: restore อัตโนมัติ
 task.spawn(function()
+    if not gui then return end
     local flagged = false
-    if gui then
-        gui.AncestryChanged:Connect(function(_, parent)
-            if parent == nil then flagged = true end
-        end)
-    end
+    gui.AncestryChanged:Connect(function(_, parent) if parent == nil then flagged = true end end)
     while task.wait(0.25) do
         if flagged then
             flagged = false
-            _ufoEnsureGuiParent()
-            pcall(function()
-                if gui then gui.Enabled = true end
-                if panel then panel.Visible = true; panel.Active = true end
-            end)
-            if typeof(showToast) == "function" then
-                showToast("UI restored", true)
-            end
+            __ensureGui(gui, panel)
+            if typeof(showToast) == "function" then showToast("UI restored", true) end
         end
     end
 end)
 
-task.defer(function()
-    if not panel then return end
-    for _,d in ipairs(panel:GetDescendants()) do
-        if d:IsA("UIStroke") then
-            pcall(function() d.Enabled = true end)
-        end
-    end
-end)
-
+-- Hotkey เรียก UI: Ctrl+Shift+U
 task.defer(function()
     local UIS = game:GetService("UserInputService")
     UIS.InputBegan:Connect(function(inp, gpe)
         if gpe or not inp then return end
-        if inp.KeyCode == Enum.KeyCode.U and UIS:IsKeyDown(Enum.KeyCode.LeftControl) and UIS:IsKeyDown(Enum.KeyCode.LeftShift) then
-            _ufoEnsureGuiParent()
-            pcall(function()
-                if gui then gui.Enabled = true end
-                if panel then panel.Visible = true; panel.Active = true end
-            end)
+        if inp.KeyCode == Enum.KeyCode.U
+        and UIS:IsKeyDown(Enum.KeyCode.LeftControl)
+        and UIS:IsKeyDown(Enum.KeyCode.LeftShift) then
+            __ensureGui(gui, panel)
             if typeof(showToast) == "function" then showToast("UI toggled", true) end
         end
     end)
 end)
 
-task.delay(0.2, function()
-    if typeof(showToast) == "function" then
-        showToast("UI ready", true)
-    end
+-- ยืนยันพร้อมใช้งาน
+task.defer(function()
+    __ensureGui(gui, panel)
+    task.delay(0.2, function() if typeof(showToast) == "function" then showToast("UI ready", true) end end)
 end)
+```0
