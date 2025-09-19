@@ -1,65 +1,7 @@
---========================================================
--- [ADD-ONLY PRELUDE] UFO HUB X — Safe Environment Prep
---========================================================
-local Players = game:GetService("Players")
-local CG      = game:GetService("CoreGui")
-
-pcall(function()
-    if not game:IsLoaded() then game.Loaded:Wait() end
-end)
-
-local LP = nil
-local t0 = os.clock()
-repeat
-    LP = Players.LocalPlayer
-    if LP then break end
-    task.wait(0.05)
-until (os.clock() - t0) > 12
-
-local function _getPG(timeout)
-    local pg, t1 = nil, os.clock()
-    repeat
-        if LP then
-            pg = LP:FindFirstChildOfClass("PlayerGui") or LP:WaitForChild("PlayerGui", 2)
-            if pg then break end
-        end
-        task.wait(0.10)
-    until (os.clock() - t1) > (timeout or 6)
-    return pg
-end
-_G.__UFO_PREP_PG = _getPG(6)
-
-_G.__UFO_SOFT_PARENT = function(gui)
-    if not gui then return end
-    pcall(function()
-        gui.Enabled = true
-        gui.DisplayOrder = 999999
-        gui.ResetOnSpawn = false
-        gui.IgnoreGuiInset = true
-        gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    end)
-    if syn and syn.protect_gui then pcall(function() syn.protect_gui(gui) end) end
-    local ok=false
-    if gethui then ok = pcall(function() gui.Parent = gethui() end) end
-    if (not ok) or (not gui.Parent) then
-        ok = pcall(function() gui.Parent = CG end)
-    end
-    if (not ok) or (not gui.Parent) then
-        local pg = _G.__UFO_PREP_PG or _getPG(4)
-        if pg then pcall(function() gui.Parent = pg end) end
-    end
-end
-
-pcall(function()
-    local old = CG:FindFirstChild("UFOHubX_KeyUI")
-    if old and old:IsA("ScreenGui") then
-        _G.__UFO_SOFT_PARENT(old)
-    end
-end)
-
-_G.__UFO_ENV_READY = true
-
---========================================================
+-- ยืนยันพร้อมใช้งาน
+task.defer(function()
+    __ensureGui(gui, panel)
+    task.--========================================================
 -- UFO HUB X — KEY UI (v18+, full drop-in)
 -- - API JSON: /verify?key=&uid=&place=  และ  /getkey
 -- - JSON parse ด้วย HttpService
@@ -74,7 +16,7 @@ local TS   = game:GetService("TweenService")
 local CG   = game:GetService("CoreGui")
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
-local LP2 = Players.LocalPlayer or LP
+local LP = Players.LocalPlayer
 
 -------------------- THEME --------------------
 local LOGO_ID   = 112676905543996
@@ -168,7 +110,7 @@ end
 -- server ตอบ: { ok:true, valid:true/false, expires_at:<unix>, reason:"..." }
 ----------------------------------------------------------------
 local function verifyWithServer(k)
-    local uid   = tostring(LP2 and LP2.UserId or "")
+    local uid   = tostring(LP and LP.UserId or "")
     local place = tostring(game.PlaceId or "")
     local qs = string.format("/verify?key=%s&uid=%s&place=%s",
         HttpService:UrlEncode(k),
@@ -191,10 +133,6 @@ end
 -- UI Helpers
 ----------------------------------------------------------------
 local function safeParent(gui)
-    if _G.__UFO_SOFT_PARENT then
-        _G.__UFO_SOFT_PARENT(gui)
-        return
-    end
     local ok=false
     if syn and syn.protect_gui then pcall(function() syn.protect_gui(gui) end) end
     if gethui then ok = pcall(function() gui.Parent = gethui() end) end
@@ -511,7 +449,7 @@ local btnGetKey = make("TextButton", {
     make("UIStroke",{Color=ACCENT, Transparency=0.6})
 })
 btnGetKey.MouseButton1Click:Connect(function()
-    local uid   = tostring(LP2 and LP2.UserId or "")
+    local uid   = tostring(LP and LP.UserId or "")
     local place = tostring(game.PlaceId or "")
     local base  = SERVER_BASES[1] or ""
     local link  = string.format("%s/getkey?uid=%s&place=%s",
@@ -554,79 +492,131 @@ end)
 
 -------------------- Open Animation --------------------
 panel.Position = UDim2.fromScale(0.5,0.5) + UDim2.fromOffset(0,14)
-tween(panel, {Position = UDim2.fromScale(0.5,0.5)}, .18)
+tween(panel, {Position = UDim2.fromScale(0.5,0.5)}, .18)(0.2, function() if typeof(showToast) == "function" then showToast("UI ready", true) end end)
+end)
 
 --========================================================
--- [ADD-ONLY POSTFIX] UI Watchdog + Bring-To-Front + Hotkey
+-- [ADD-ONLY PATCH] Server Verify (tolerant) + UI Ensure/Hotkey
+-- ➊ แพตช์ verifyWithServer ให้ทนหลายรูปแบบ JSON และลอง ?format=json
+-- ➋ บังคับให้ GUI โผล่เสมอ + ดันขึ้นหน้าสุด + Hotkey เรียก (Ctrl+Shift+U)
 --========================================================
-local function __ensureGui(gui_, panel_)
-    if not gui_ then return end
-    if not gui_.Parent then
-        if _G.__UFO_SOFT_PARENT then
-            _G.__UFO_SOFT_PARENT(gui_)
-        else
-            pcall(function()
-                gui_.Enabled = true
-                gui_.DisplayOrder = 999999
-                gui_.ResetOnSpawn = false
-                gui_.IgnoreGuiInset = true
-                gui_.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-                gui_.Parent = game:GetService("CoreGui")
-            end)
-        end
+
+-- ➊ PATCH: ทำ verifyWithServer ให้ทนรูปแบบ JSON และลองเรียกซ้ำด้วย &format=json
+do
+    local function _tolerant_ok(data)
+        if not data then return false end
+        -- ยอมรับถ้า data.valid == true ไม่ว่ามี ok หรือไม่
+        if data.valid == true then return true end
+        -- หรือกรณีเดิม ok=true และ valid==nil/true
+        if data.ok == true and (data.valid == nil or data.valid == true) then return true end
+        return false
     end
-    pcall(function()
-        gui_.Enabled = true
-        if panel_ then panel_.Visible = true panel_.Active = true end
-    end)
+
+    local _orig_verify = verifyWithServer  -- เก็บของเดิมไว้ (ไม่ลบ)
+
+    function verifyWithServer(k)
+        local uid   = tostring(LP and LP.UserId or "")
+        local place = tostring(game.PlaceId or "")
+
+        local baseQS = string.format("/verify?key=%s&uid=%s&place=%s",
+            HttpService:UrlEncode(k),
+            HttpService:UrlEncode(uid),
+            HttpService:UrlEncode(place)
+        )
+
+        -- ครั้งที่ 1: เรียกปกติ
+        local ok1, data1 = json_get_with_failover(baseQS)
+        if ok1 and _tolerant_ok(data1) then
+            local exp = tonumber(data1.expires_at) or (os.time() + DEFAULT_TTL_SECONDS)
+            return true, nil, exp
+        end
+
+        -- ครั้งที่ 2: เติม &format=json เผื่อฝั่ง server ต้องการพารามิเตอร์นี้
+        local ok2, data2 = json_get_with_failover(baseQS .. "&format=json")
+        if ok2 and _tolerant_ok(data2) then
+            local exp = tonumber(data2.expires_at) or (os.time() + DEFAULT_TTL_SECONDS)
+            return true, nil, exp
+        end
+
+        -- ถ้ายังไม่ได้ ให้คืนเหตุผลเดิมๆ
+        local reason = (data1 and data1.reason) or (data2 and data2.reason) or "invalid"
+        return false, tostring(reason), nil
+    end
 end
 
--- ดัน DisplayOrder ให้อยู่บนสุด
-task.defer(function()
-    if not gui then return end
-    local parent = gui.Parent
-    if not parent then return end
-    local maxDO = 0
-    for _,g in ipairs(parent:GetChildren()) do
-        if g:IsA("ScreenGui") then
-            local do_ = 0
-            pcall(function() do_ = g.DisplayOrder or 0 end)
-            if do_ > maxDO then maxDO = do_ end
+-- ➋ UI ENSURE: บังคับให้ GUI โผล่ + Bring-to-front + คืนจอเมื่อถูกถอด + Hotkey
+do
+    local function __ensureParent()
+        if not gui then return end
+        if not gui.Parent then
+            if _G and _G.__UFO_SOFT_PARENT then
+                _G.__UFO_SOFT_PARENT(gui)
+            else
+                pcall(function() gui.Parent = CG end)
+                if not gui.Parent then
+                    local plr = Players.LocalPlayer
+                    local pg = plr and (plr:FindFirstChildOfClass("PlayerGui") or plr:WaitForChild("PlayerGui", 2))
+                    if pg then pcall(function() gui.Parent = pg end) end
+                end
+            end
+        end
+        pcall(function()
+            gui.Enabled = true
+            gui.IgnoreGuiInset = true
+            gui.ResetOnSpawn = false
+            gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+        end)
+        if panel then
+            panel.Visible = true
+            panel.Active  = true
         end
     end
-    pcall(function() gui.DisplayOrder = math.max(maxDO + 1, 999999) end)
-end)
 
--- กันโดนถอด: restore อัตโนมัติ
-task.spawn(function()
-    if not gui then return end
-    local flagged = false
-    gui.AncestryChanged:Connect(function(_, parent) if parent == nil then flagged = true end end)
-    while task.wait(0.25) do
-        if flagged then
-            flagged = false
-            __ensureGui(gui, panel)
-            if typeof(showToast) == "function" then showToast("UI restored", true) end
+    -- ดัน DisplayOrder ให้อยู่บนสุด
+    local function __bringToFront()
+        if not gui or not gui.Parent then return end
+        local maxDO = 0
+        for _, g in ipairs(gui.Parent:GetChildren()) do
+            if g:IsA("ScreenGui") then
+                local d = 0
+                pcall(function() d = g.DisplayOrder or 0 end)
+                if d > maxDO then maxDO = d end
+            end
         end
+        pcall(function() gui.DisplayOrder = math.max(maxDO + 1, 999999) end)
     end
-end)
 
--- Hotkey เรียก UI: Ctrl+Shift+U
-task.defer(function()
-    local UIS = game:GetService("UserInputService")
-    UIS.InputBegan:Connect(function(inp, gpe)
-        if gpe or not inp then return end
-        if inp.KeyCode == Enum.KeyCode.U
-        and UIS:IsKeyDown(Enum.KeyCode.LeftControl)
-        and UIS:IsKeyDown(Enum.KeyCode.LeftShift) then
-            __ensureGui(gui, panel)
-            if typeof(showToast) == "function" then showToast("UI toggled", true) end
-        end
+    -- เรียก ensure หลายครั้งกัน timing
+    __ensureParent()
+    task.delay(0.05, __ensureParent)
+    task.delay(0.20, __ensureParent)
+    task.delay(0.50, function() __ensureParent(); __bringToFront() end)
+
+    -- เฝ้าดู ถ้าโดนถอด ออก ให้คืนกลับอัตโนมัติ
+    task.spawn(function()
+        if not gui then return end
+        gui.AncestryChanged:Connect(function(_, parent)
+            if parent == nil then
+                task.wait(0.05)
+                __ensureParent()
+                __bringToFront()
+                if typeof(showToast) == "function" then showToast("UI restored", true) end
+            end
+        end)
     end)
-end)
 
--- ยืนยันพร้อมใช้งาน
-task.defer(function()
-    __ensureGui(gui, panel)
-    task.delay(0.2, function() if typeof(showToast) == "function" then showToast("UI ready", true) end end)
-end)
+    -- Hotkey: Ctrl + Shift + U เพื่อเรียก/ดัน UI ขึ้นหน้า
+    task.defer(function()
+        local UIS = game:GetService("UserInputService")
+        UIS.InputBegan:Connect(function(inp, gpe)
+            if gpe then return end
+            if inp.KeyCode == Enum.KeyCode.U
+            and UIS:IsKeyDown(Enum.KeyCode.LeftControl)
+            and UIS:IsKeyDown(Enum.KeyCode.LeftShift) then
+                __ensureParent()
+                __bringToFront()
+                if typeof(showToast) == "function" then showToast("UI toggled", true) end
+            end
+        end)
+    end)
+end
