@@ -630,4 +630,3 @@ task.defer(function()
     __ensureGui(gui, panel)
     task.delay(0.2, function() if typeof(showToast) == "function" then showToast("UI ready", true) end end)
 end)
-```0
