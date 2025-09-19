@@ -1,159 +1,159 @@
 --========================================================
--- UFO HUB X — KEY UI (Server-Enabled, Single File, Integrated)
--- - API JSON: /verify?key=&uid=&place=  และ  /getkey
--- - JSON parse ด้วย HttpService
--- - จำอายุคีย์ผ่าน _G.UFO_SaveKeyState (48 ชม. หรือ expires_at จาก server)
--- - ปุ่ม Get Key คัดลอกลิงก์พร้อม uid/place
--- - รองรับหลายเซิร์ฟเวอร์ (failover & retry)
--- - Fade-out แล้ว Destroy เมื่อสำเร็จ
+-- UFO HUB X — KEY UI (Full, Compatible with Boot Loader)
 --========================================================
 
--------------------- Safe Prelude --------------------
-local Players = game:GetService("Players")
-local CG      = game:GetService("CoreGui")
-local TS      = game:GetService("TweenService")
-local HttpService = game:GetService("HttpService")
+local Players      = game:GetService("Players")
+local CG           = game:GetService("CoreGui")
+local TS           = game:GetService("TweenService")
+local HttpService  = game:GetService("HttpService")
 
 pcall(function() if not game:IsLoaded() then game.Loaded:Wait() end end)
-
 local LP = Players.LocalPlayer
-do
-    local t0=os.clock()
-    repeat
-        LP = Players.LocalPlayer
-        if LP then break end
-        task.wait(0.05)
-    until (os.clock()-t0)>12
-end
 
-local function _getPG(timeout)
-    local t1=os.clock()
-    repeat
-        if LP then
-            local pg = LP:FindFirstChildOfClass("PlayerGui") or LP:WaitForChild("PlayerGui",2)
-            if pg then return pg end
-        end
-        task.wait(0.10)
-    until (os.clock()-t1)>(timeout or 6)
-end
-local PREP_PG = _getPG(6)
-
+-- ป้องกัน Parent หาย
 local function SOFT_PARENT(gui)
-    if not gui then return end
-    pcall(function()
-        if gui:IsA("ScreenGui") then
-            gui.Enabled=true
-            gui.DisplayOrder=999999
-            gui.ResetOnSpawn=false
-            gui.IgnoreGuiInset=true
-            gui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
-        end
-    end)
     if syn and syn.protect_gui then pcall(function() syn.protect_gui(gui) end) end
-    local ok=false
-    if gethui then ok=pcall(function() gui.Parent=gethui() end) end
-    if (not ok) or (not gui.Parent) then ok=pcall(function() gui.Parent=CG end) end
+    local ok = false
+    if gethui then ok = pcall(function() gui.Parent = gethui() end) end
+    if (not ok) or (not gui.Parent) then ok = pcall(function() gui.Parent = CG end) end
     if (not ok) or (not gui.Parent) then
-        local pg = PREP_PG or _getPG(4)
-        if pg then pcall(function() gui.Parent=pg end) end
+        local pg = LP:FindFirstChildOfClass("PlayerGui") or LP:WaitForChild("PlayerGui", 2)
+        if pg then pcall(function() gui.Parent = pg end) end
     end
 end
 
--------------------- Theme --------------------
-local LOGO_ID   = 112676905543996
-local ACCENT    = Color3.fromRGB(0,255,140)
-local BG_DARK   = Color3.fromRGB(10,10,10)
-local FG        = Color3.fromRGB(235,235,235)
-local SUB       = Color3.fromRGB(22,22,22)
-local RED       = Color3.fromRGB(210,60,60)
-local GREEN     = Color3.fromRGB(60,200,120)
+-- Theme
+local ACCENT = Color3.fromRGB(0,255,140)
+local BG_DARK = Color3.fromRGB(10,10,10)
+local SUB     = Color3.fromRGB(22,22,22)
+local RED     = Color3.fromRGB(210,60,60)
+local GREEN   = Color3.fromRGB(60,200,120)
 
--------------------- Links / Servers --------------------
-local DISCORD_URL = "https://discord.gg/your-server"
-
+-- Server
 local SERVER_BASES = {
-    "https://ufo-hub-x-key-umoq.onrender.com", -- หลัก
-    -- "https://ufo-hub-x-server-key2.onrender.com", -- สำรอง (ถ้ามี)
+    "https://ufo-hub-x-key-umoq.onrender.com"
 }
-local DEFAULT_TTL_SECONDS = 48*3600
+local DEFAULT_TTL = 48*3600
 
--------------------- Allow-list (ผ่านแน่) --------------------
+-- Allow keys
 local ALLOW_KEYS = {
-    ["JJJMAX"]                 = { reusable=true, ttl=DEFAULT_TTL_SECONDS },
-    ["GMPANUPHONGARTPHAIRIN"]  = { reusable=true, ttl=DEFAULT_TTL_SECONDS },
+    ["JJJMAX"] = { reusable=true, ttl=DEFAULT_TTL },
+    ["GMPANUPHONGARTPHAIRIN"] = { reusable=true, ttl=DEFAULT_TTL },
 }
 
 local function normKey(s)
-    s = tostring(s or ""):gsub("%c",""):gsub("%s+",""):gsub("[^%w]","")
-    return string.upper(s)
-end
-local function isAllowedKey(k)
-    local nk = normKey(k)
-    local meta = ALLOW_KEYS[nk]
-    if meta then return true, nk, meta end
-    return false, nk, nil
+    return tostring(s or ""):gsub("%c",""):gsub("%s+",""):gsub("[^%w]",""):upper()
 end
 
--------------------- HTTP helpers --------------------
+-- HTTP
 local function http_get(url)
-    if http and http.request then
-        local ok,res = pcall(http.request,{Url=url, Method="GET"})
-        if ok and res and (res.Body or res.body) then return true,(res.Body or res.body) end
-        return false,"executor_http_request_failed"
-    end
     if syn and syn.request then
-        local ok,res = pcall(syn.request,{Url=url, Method="GET"})
+        local ok,res = pcall(syn.request,{Url=url,Method="GET"})
         if ok and res and (res.Body or res.body) then return true,(res.Body or res.body) end
-        return false,"syn_request_failed"
     end
     local ok,body = pcall(function() return game:HttpGet(url) end)
     if ok and body then return true,body end
-    return false,"roblox_httpget_failed"
+    return false,nil
 end
 
 local function http_json_get(url)
     local ok,body = http_get(url)
-    if not ok or not body then return false,nil,"http_error" end
-    local okj,data = pcall(function() return HttpService:JSONDecode(tostring(body)) end)
-    if not okj then return false,nil,"json_error" end
-    return true,data,nil
-end
-
-local function json_get_with_failover(path_qs)
-    local last_err="no_servers"
-    for _,base in ipairs(SERVER_BASES) do
-        local url = (base..path_qs)
-        for i=0,2 do
-            if i>0 then task.wait(0.6*i) end
-            local ok,data,err = http_json_get(url)
-            if ok and data then return true,data end
-            last_err = err or "http_error"
-        end
-    end
-    return false,nil,last_err
+    if not ok then return false,nil end
+    local ok2,data = pcall(function() return HttpService:JSONDecode(body) end)
+    if not ok2 then return false,nil end
+    return true,data
 end
 
 local function verifyWithServer(k)
-    local uid   = tostring(LP and LP.UserId or "")
+    local uid   = tostring(LP.UserId or "")
     local place = tostring(game.PlaceId or "")
     local qs = string.format("/verify?key=%s&uid=%s&place=%s",
-        HttpService:UrlEncode(k),
-        HttpService:UrlEncode(uid),
-        HttpService:UrlEncode(place)
-    )
-    local ok,data = json_get_with_failover(qs)
-    if not ok or not data then return false,"server_unreachable",nil end
-    if data.ok and data.valid then
-        local exp = tonumber(data.expires_at) or (os.time()+DEFAULT_TTL_SECONDS)
-        return true,nil,exp
-    else
-        return false,tostring(data.reason or "invalid"),nil
+        HttpService:UrlEncode(k), HttpService:UrlEncode(uid), HttpService:UrlEncode(place))
+    for _,base in ipairs(SERVER_BASES) do
+        local ok,data = http_json_get(base..qs)
+        if ok and data and data.ok and data.valid then
+            return true,data.expires_at or (os.time()+DEFAULT_TTL)
+        end
     end
+    return false,nil
 end
 
--------------------- (ตัด UI ส่วนที่เหลือเพื่อให้สั้น) --------------------
--- UI: panel, textbox, submit button, toast, status, get key, discord
--- Flow: submit ตรวจ key -> server -> UFO_SaveKeyState -> fade out UI
--- (เหมือนที่คุณให้มาเป๊ะ ๆ ด้านบน)
+-- UI utils
+local function make(class, props, kids)
+    local o=Instance.new(class)
+    for k,v in pairs(props or {}) do o[k]=v end
+    for _,c in ipairs(kids or {}) do c.Parent=o end
+    return o
+end
 
-print("✅ UFO HUB X Key UI Loaded") -- ยืนยันโหลด
+-- สร้าง GUI
+local gui = Instance.new("ScreenGui")
+gui.Name="UFOHubX_KeyUI"
+gui.IgnoreGuiInset=true
+gui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
+SOFT_PARENT(gui)
+
+local panel = make("Frame",{
+    Parent=gui, Active=true, Draggable=true,
+    Size=UDim2.fromOffset(600,300),
+    AnchorPoint=Vector2.new(0.5,0.5), Position=UDim2.fromScale(0.5,0.5),
+    BackgroundColor3=BG_DARK
+},{
+    make("UICorner",{CornerRadius=UDim.new(0,20)})
+})
+
+local keyBox = make("TextBox",{
+    Parent=panel, PlaceholderText="ใส่ Key ที่นี่",
+    Size=UDim2.new(1,-40,0,40), Position=UDim2.new(0,20,0,100),
+    BackgroundColor3=SUB, TextColor3=Color3.new(1,1,1), TextSize=18
+},{
+    make("UICorner",{CornerRadius=UDim.new(0,12)})
+})
+
+local statusLabel = make("TextLabel",{
+    Parent=panel, BackgroundTransparency=1,
+    Size=UDim2.new(1,-40,0,24), Position=UDim2.new(0,20,0,150),
+    Text="", TextColor3=Color3.new(1,1,1)
+})
+
+local btnSubmit = make("TextButton",{
+    Parent=panel, Text="🔒 Submit Key",
+    Size=UDim2.new(1,-40,0,40), Position=UDim2.new(0,20,0,190),
+    BackgroundColor3=RED, TextColor3=Color3.new(1,1,1), TextSize=18
+},{
+    make("UICorner",{CornerRadius=UDim.new(0,12)})
+})
+
+-- Flow
+local submitting=false
+local function doSubmit()
+    if submitting then return end
+    submitting=true
+    local k = normKey(keyBox.Text)
+    if k=="" then statusLabel.Text="⚠️ โปรดใส่คีย์"; submitting=false; return end
+
+    local meta = ALLOW_KEYS[k]
+    local valid,exp = false,nil
+    if meta then
+        valid=true; exp=os.time()+(meta.ttl or DEFAULT_TTL)
+    else
+        valid,exp = verifyWithServer(k)
+    end
+
+    if not valid then
+        statusLabel.Text="❌ คีย์ไม่ถูกต้อง"
+        submitting=false
+        return
+    end
+
+    statusLabel.Text="✅ Key Accepted!"
+    _G.UFO_HUBX_KEY_OK = true
+    _G.UFO_HUBX_KEY    = k
+    if _G.UFO_SaveKeyState then pcall(_G.UFO_SaveKeyState,k,exp,false) end
+    if _G.UFO_StartDownload then pcall(_G.UFO_StartDownload) end
+
+    task.delay(0.3,function() if gui then gui:Destroy() end end)
+end
+btnSubmit.MouseButton1Click:Connect(doSubmit)
+
+print("[UFO-HUB-X] Key UI Loaded.")
