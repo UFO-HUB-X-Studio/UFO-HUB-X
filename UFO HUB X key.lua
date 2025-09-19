@@ -26,7 +26,7 @@ local GREEN     = Color3.fromRGB(60,200,120)
 local DISCORD_URL = "https://discord.gg/your-server"
 
 -- ถ้า UI คุณมีตัวแปรเดียว
-local GETKEY_URL = "https://<your-gateway>.onrender.com"
+local GETKEY_URL = "https://ufo-hub-x-server-key.onrender.com"
 
 -- ถ้า UI รองรับหลายโดเมนเป็นตาราง
 local SERVER_BASES = {
