@@ -71,7 +71,7 @@ local GREEN     = Color3.fromRGB(60,200,120)
 -------------------- Links / Servers --------------------
 local DISCORD_URL = "https://discord.gg/your-server"
 
-local SERVER_BASES = {
+https SERVER_BASES = {
     "https://ufo-hub-x-key-umoq.onrender.com", -- หลัก
     -- "https://ufo-hub-x-server-key2.onrender.com", -- สำรอง (ถ้ามี)
 }
