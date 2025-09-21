@@ -62,7 +62,7 @@ end
 -------------------- FORCE SERVER --------------------
 -- ❗ เปลี่ยน URL ตรงนี้ถ้ามีฐานใหม่
 _G.UFO_LAST_BASE = nil   -- เคลียร์ความจำเก่า
-local FORCE_BASE = "https://ufo-hub-x-key-umoq.onrender.com"
+local FORCE_BASE = "https://ufo-hub-x-server-key-777.onrender.com"
 
 local function sanitizeBase(b)
     b = tostring(b or ""):gsub("%s+","")
@@ -86,7 +86,7 @@ local GREEN     = Color3.fromRGB(60,200,120)
 -------------------- Links / Servers --------------------
 local DISCORD_URL = "https://discord.gg/your-server"
 
--- ใช้ฐานเดียวที่บังคับ (ตัดพฤติกรรม failover เพื่อกันเด้งไปเก่า)
+-- ใช้ฐานเดียวที่บังคับ (กันเด้งไปลิงก์เก่า)
 local SERVER_BASES = {
     (_G.UFO_SERVER_BASE or FORCE_BASE),
 }
@@ -461,8 +461,8 @@ local btnGetKey = make("TextButton",{
 })
 
 btnGetKey.MouseButton1Click:Connect(function()
-    -- บังคับให้ใช้ฐานที่กำหนดเท่านั้น
-    _G.UFO_LAST_BASE = FORCE_BASE
+    -- บังคับใช้ฐานที่กำหนด
+    _G.UFO_LAST_BASE   = FORCE_BASE
     _G.UFO_SERVER_BASE = FORCE_BASE
 
     local uid   = tostring(LP and LP.UserId or "")
@@ -472,7 +472,6 @@ btnGetKey.MouseButton1Click:Connect(function()
         HttpService:UrlEncode(uid), HttpService:UrlEncode(place)
     )
 
-    -- เรียกจริงกับฐานบังคับ
     local ok,data,base_used = json_get_forced(qs)
     local base = sanitizeBase(base_used or FORCE_BASE)
     local url  = base .. qs
@@ -489,7 +488,6 @@ btnGetKey.MouseButton1Click:Connect(function()
             end
         end
     else
-        -- ถ้าล้มเหลว ก็ยังคัดลอกลิงก์ฐานบังคับให้
         setClipboard(url)
         btnGetKey.Text = "⚠️ Copied (server?)"
         showToast("คัดลอกลิงก์แล้ว แต่เรียกเซิร์ฟเวอร์ไม่สำเร็จ", false)
@@ -525,11 +523,11 @@ local btnDiscord = make("TextButton",{
 btnDiscord.MouseButton1Click:Connect(function()
     setClipboard(DISCORD_URL)
     btnDiscord.Text="✅ Link copied!"
-    task.delay(1.5,function() if btnDiscord then btnDiscord.Text="Join the Discord" end end)
+    task.delay(1.5,function() if btnDiscord and btnDiscord.Parent then btnDiscord.Text="Join the Discord" end end)
 end)
 
 -------------------- Open Animation --------------------
 panel.Position = UDim2.fromScale(0.5,0.5) + UDim2.fromOffset(0,14)
 TS:Create(panel, TweenInfo.new(.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-    Position=UDim2.fromScale(0.5,0.5)
+    Position = UDim2.fromScale(0.5,0.5)
 }):Play()
