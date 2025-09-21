@@ -504,6 +504,9 @@ local btnGetKey = make("TextButton",{
 })
 
 btnGetKey.MouseButton1Click:Connect(function()
+    -- เปิดใช้งานปุ่มเสมอ
+    if not btnGetKey.Active then btnGetKey.Active = true end
+
     -- บังคับใช้ฐานที่กำหนดทุกครั้ง
     _G.UFO_LAST_BASE   = FORCE_BASE
     _G.UFO_SERVER_BASE = FORCE_BASE
@@ -511,21 +514,22 @@ btnGetKey.MouseButton1Click:Connect(function()
     local uid   = tostring(LP and LP.UserId or "")
     local place = tostring(game.PlaceId or "")
 
-    -- ลิงก์หน้า UI (ไม่ใช่ลิงก์ API)
+    -- ลิงก์หน้า UI (ไว้ให้ก็อป)
     local qs_ui  = string.format("/?uid=%s&place=%s",
         HttpService:UrlEncode(uid), HttpService:UrlEncode(place)
     )
     local base   = sanitizeBase(_G.UFO_SERVER_BASE or FORCE_BASE)
     local ui_url = base .. qs_ui
 
-    -- เรียก /getkey เบื้องหลังเพื่อจอง/ออกคีย์ (จะสำเร็จหรือไม่ เราก็ยังคัดลอกลิงก์หน้า UI ให้ผู้ใช้)
+    -- ลองเรียก /getkey
     local qs_api = string.format("/getkey?uid=%s&place=%s",
         HttpService:UrlEncode(uid), HttpService:UrlEncode(place)
     )
     local ok,data = json_get_forced(qs_api)
 
-    -- คัดลอก "ลิงก์หน้า UI"
+    -- คัดลอกลิงก์เสมอ
     setClipboard(ui_url)
+
     if ok and data and data.ok then
         btnGetKey.Text = "✅ Link copied!"
         showToast("คัดลอกลิงก์หน้า UI แล้ว", true)
@@ -537,12 +541,14 @@ btnGetKey.MouseButton1Click:Connect(function()
         end
     else
         btnGetKey.Text = "⚠️ Copied (server?)"
-        showToast("คัดลอกลิงก์หน้า UI แล้ว แต่เรียกเซิร์ฟเวอร์ไม่สำเร็จ", false)
+        showToast("คัดลอกลิงก์หน้า UI แล้ว แต่เซิร์ฟเวอร์ไม่ตอบ", false)
     end
 
+    -- คืนค่าให้ปุ่มกดได้อีก
     task.delay(1.6, function()
         if btnGetKey and btnGetKey.Parent then
-            btnGetKey.Text = "🔐  Get Key"
+            btnGetKey.Text   = "🔐  Get Key"
+            btnGetKey.Active = true
         end
     end)
 end)
