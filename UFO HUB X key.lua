@@ -453,7 +453,6 @@ btnSubmit.Activated:Connect(doSubmit)
 
 -------------------- GET KEY (เรียก /getkey ก่อน แล้วค่อยคัดลอกลิงก์) --------------------
 local function showLinkPopup(urlText)
-    -- ป๊อปอัพเล็ก ๆ โชว์ลิงก์ให้ก็อปเองได้ กรณีเครื่องไม่มี setclipboard
     local pop = make("Frame",{
         Parent=panel, BackgroundColor3=Color3.fromRGB(18,18,18), BackgroundTransparency=0.1,
         Size=UDim2.new(1,-56,0,86), Position=UDim2.new(0,28,0,324+50+12), ZIndex=80
@@ -504,40 +503,40 @@ local btnGetKey = make("TextButton",{
 })
 
 btnGetKey.MouseButton1Click:Connect(function()
-    -- บังคับใช้ฐานที่กำหนดทุกครั้ง
     _G.UFO_LAST_BASE   = FORCE_BASE
     _G.UFO_SERVER_BASE = FORCE_BASE
 
-    if btnGetKey.Active == false then return end
-    btnGetKey.Active = false
+    if btnGetKey.Active = false
     btnGetKey.Text = "⏳ Getting..."
 
     local uid   = tostring(LP and LP.UserId or "")
     local place = tostring(game.PlaceId or "")
 
-    local qs  = string.format("/getkey?uid=%s&place=%s",
+    local qs = string.format("/getkey?uid=%s&place=%s",
         HttpService:UrlEncode(uid), HttpService:UrlEncode(place)
     )
 
-    -- เรียกจริงกับฐานบังคับ
     local ok,data,base_used = json_get_forced(qs)
     local base = sanitizeBase(base_used or FORCE_BASE)
     local url  = base .. qs
 
     if ok and data and data.ok then
+        -- คัดลอกอัตโนมัติ ถ้าเครื่องรองรับ
         if setclipboard then
             pcall(setclipboard, url)
             btnGetKey.Text = "✅ Link copied!"
             showToast("ลิงก์รับคีย์ถูกคัดลอกแล้ว", true)
         else
+            -- ถ้าคัดลอกไม่ได้ ให้ป๊อปอัพช่องลิงก์
             btnGetKey.Text = "✅ Link ready"
             showLinkPopup(url)
             showToast("คัดลอกลิงก์จากช่องด้านล่างได้เลย", true)
         end
 
+        -- โชว์เวลาที่เหลือ ถ้ามี expires_at
         if data.expires_at then
             local left = tonumber(data.expires_at) - os.time()
-            if left and left>0 then
+            if left and left > 0 then
                 setStatus(("คีย์ถูกจองแล้ว • เหลือเวลา ~%d ชม."):format(math.floor(left/3600)), true)
             else
                 setStatus("คีย์ถูกจองแล้ว", true)
@@ -546,7 +545,7 @@ btnGetKey.MouseButton1Click:Connect(function()
             setStatus("คีย์ถูกจองแล้ว", true)
         end
     else
-        -- เซิร์ฟเวอร์ไม่ตอบ / JSON เพี้ยน → ไม่ค้าง ให้ user ก็อปเองได้
+        -- เซิร์ฟเวอร์ไม่ตอบ: ไม่ให้ค้างปุ่ม และยังให้ลิงก์ฐานไปก่อน
         showLinkPopup(url)
         btnGetKey.Text = "⚠️ Copied (server?)"
         showToast("เรียกเซิร์ฟเวอร์ไม่สำเร็จ • ใช้ลิงก์นี้แทน", false)
@@ -590,3 +589,4 @@ btnDiscord.MouseButton1Click:Connect(function()
         showToast("คัดลอกลิงก์จาก status ได้เลย", true)
     end
 end)
+        
