@@ -506,13 +506,19 @@ btnGetKey.MouseButton1Click:Connect(function()
     _G.UFO_LAST_BASE   = FORCE_BASE
     _G.UFO_SERVER_BASE = FORCE_BASE
 
-    if btnGetKey.Active = false
-    btnGetKey.Text = "⏳ Getting..."
+    if btnGetKey.MouseButton1Click:Connect(function()
+    -- บังคับใช้ฐานที่กำหนดทุกครั้ง
+    _G.UFO_LAST_BASE   = FORCE_BASE
+    _G.UFO_SERVER_BASE = FORCE_BASE
+
+    if btnGetKey.Active == false then return end
+    btnGetKey.Active = false
+    btnGetKey.Text   = "⏳ Requesting..."
 
     local uid   = tostring(LP and LP.UserId or "")
     local place = tostring(game.PlaceId or "")
 
-    local qs = string.format("/getkey?uid=%s&place=%s",
+    local qs  = string.format("/getkey?uid=%s&place=%s",
         HttpService:UrlEncode(uid), HttpService:UrlEncode(place)
     )
 
@@ -521,40 +527,42 @@ btnGetKey.MouseButton1Click:Connect(function()
     local url  = base .. qs
 
     if ok and data and data.ok then
-        -- คัดลอกอัตโนมัติ ถ้าเครื่องรองรับ
+        -- คัดลอกลิงก์อัตโนมัติ ถ้าทำได้ / ไม่งั้นโชว์ popup ให้ก็อปเอง
         if setclipboard then
             pcall(setclipboard, url)
             btnGetKey.Text = "✅ Link copied!"
             showToast("ลิงก์รับคีย์ถูกคัดลอกแล้ว", true)
         else
-            -- ถ้าคัดลอกไม่ได้ ให้ป๊อปอัพช่องลิงก์
-            btnGetKey.Text = "✅ Link ready"
+            btnGetKey.Text = "📋 Copy above"
             showLinkPopup(url)
-            showToast("คัดลอกลิงก์จากช่องด้านล่างได้เลย", true)
         end
 
-        -- โชว์เวลาที่เหลือ ถ้ามี expires_at
         if data.expires_at then
             local left = tonumber(data.expires_at) - os.time()
-            if left and left > 0 then
+            if left and left>0 then
                 setStatus(("คีย์ถูกจองแล้ว • เหลือเวลา ~%d ชม."):format(math.floor(left/3600)), true)
             else
                 setStatus("คีย์ถูกจองแล้ว", true)
             end
         else
-            setStatus("คีย์ถูกจองแล้ว", true)
+            setStatus("ลิงก์รับคีย์พร้อม ใช้ได้เลย", true)
         end
     else
-        -- เซิร์ฟเวอร์ไม่ตอบ: ไม่ให้ค้างปุ่ม และยังให้ลิงก์ฐานไปก่อน
-        showLinkPopup(url)
-        btnGetKey.Text = "⚠️ Copied (server?)"
-        showToast("เรียกเซิร์ฟเวอร์ไม่สำเร็จ • ใช้ลิงก์นี้แทน", false)
-        setStatus("เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ชั่วคราว — ลิงก์รับคีย์อยู่ด้านล่าง", false)
+        -- server ไม่ตอบ แต่ยังให้ลิงก์ฐานบังคับเพื่อไปกดเองได้
+        if setclipboard then
+            pcall(setclipboard, url)
+            btnGetKey.Text = "⚠️ Copied (server?)"
+            showToast("คัดลอกลิงก์แล้ว แต่เรียกเซิร์ฟเวอร์ไม่สำเร็จ", false)
+        else
+            btnGetKey.Text = "⚠️ Copy above"
+            showLinkPopup(url)
+        end
+        setStatus("ลองเปิดลิงก์แล้วรับคีย์ด้วยตัวเองได้เลย", false)
     end
 
     task.delay(1.6, function()
         if btnGetKey and btnGetKey.Parent then
-            btnGetKey.Text = "🔐  Get Key"
+            btnGetKey.Text   = "🔐  Get Key"
             btnGetKey.Active = true
         end
     end)
@@ -585,8 +593,21 @@ btnDiscord.MouseButton1Click:Connect(function()
         pcall(setclipboard, DISCORD_URL)
         showToast("คัดลอกลิงก์ Discord แล้ว", true)
     else
-        setStatus("Discord: "..DISCORD_URL, true)
-        showToast("คัดลอกลิงก์จาก status ได้เลย", true)
+        showLinkPopup(DISCORD_URL)
     end
+end)
+
+-------------------- Safety watchdog (กันกรณี UI ไม่โชว์) --------------------
+task.delay(0.5, function()
+    pcall(function()
+        if panel then
+            panel.Visible = true
+            panel.BackgroundTransparency = panel.BackgroundTransparency or 0
+        end
+        if gui and not gui.Parent then
+            SOFT_PARENT(gui)
+        end
+        gui.Enabled = true
+    end)
 end)
         
