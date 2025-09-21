@@ -508,55 +508,41 @@ btnGetKey.MouseButton1Click:Connect(function()
     _G.UFO_LAST_BASE   = FORCE_BASE
     _G.UFO_SERVER_BASE = FORCE_BASE
 
-    if btnGetKey.Active == false then return end
-    btnGetKey.Active = false
-    btnGetKey.Text = "⏳ Getting..."
-
     local uid   = tostring(LP and LP.UserId or "")
     local place = tostring(game.PlaceId or "")
 
-    local qs  = string.format("/getkey?uid=%s&place=%s",
+    -- ลิงก์หน้า UI (ไม่ใช่ลิงก์ API)
+    local qs_ui  = string.format("/?uid=%s&place=%s",
         HttpService:UrlEncode(uid), HttpService:UrlEncode(place)
     )
+    local base   = sanitizeBase(_G.UFO_SERVER_BASE or FORCE_BASE)
+    local ui_url = base .. qs_ui
 
-    -- เรียกจริงกับฐานบังคับ
-    local ok,data,base_used = json_get_forced(qs)
-    local base = sanitizeBase(base_used or FORCE_BASE)
-    local url  = base .. qs
+    -- เรียก /getkey เบื้องหลังเพื่อจอง/ออกคีย์ (จะสำเร็จหรือไม่ เราก็ยังคัดลอกลิงก์หน้า UI ให้ผู้ใช้)
+    local qs_api = string.format("/getkey?uid=%s&place=%s",
+        HttpService:UrlEncode(uid), HttpService:UrlEncode(place)
+    )
+    local ok,data = json_get_forced(qs_api)
 
+    -- คัดลอก "ลิงก์หน้า UI"
+    setClipboard(ui_url)
     if ok and data and data.ok then
-        if setclipboard then
-            pcall(setclipboard, url)
-            btnGetKey.Text = "✅ Link copied!"
-            showToast("ลิงก์รับคีย์ถูกคัดลอกแล้ว", true)
-        else
-            btnGetKey.Text = "✅ Link ready"
-            showLinkPopup(url)
-            showToast("คัดลอกลิงก์จากช่องด้านล่างได้เลย", true)
-        end
-
+        btnGetKey.Text = "✅ Link copied!"
+        showToast("คัดลอกลิงก์หน้า UI แล้ว", true)
         if data.expires_at then
             local left = tonumber(data.expires_at) - os.time()
             if left and left>0 then
                 setStatus(("คีย์ถูกจองแล้ว • เหลือเวลา ~%d ชม."):format(math.floor(left/3600)), true)
-            else
-                setStatus("คีย์ถูกจองแล้ว", true)
             end
-        else
-            setStatus("คีย์ถูกจองแล้ว", true)
         end
     else
-        -- เซิร์ฟเวอร์ไม่ตอบ / JSON เพี้ยน → ไม่ค้าง ให้ user ก็อปเองได้
-        showLinkPopup(url)
         btnGetKey.Text = "⚠️ Copied (server?)"
-        showToast("เรียกเซิร์ฟเวอร์ไม่สำเร็จ • ใช้ลิงก์นี้แทน", false)
-        setStatus("เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ชั่วคราว — ลิงก์รับคีย์อยู่ด้านล่าง", false)
+        showToast("คัดลอกลิงก์หน้า UI แล้ว แต่เรียกเซิร์ฟเวอร์ไม่สำเร็จ", false)
     end
 
     task.delay(1.6, function()
         if btnGetKey and btnGetKey.Parent then
             btnGetKey.Text = "🔐  Get Key"
-            btnGetKey.Active = true
         end
     end)
 end)
