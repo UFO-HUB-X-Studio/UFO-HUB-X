@@ -1,12 +1,8 @@
 --========================================================
--- UFO HUB X — KEY UI (Server-Enabled, Single File)
--- - API JSON: /verify?key=&uid=&place=  และ  /getkey
--- - บังคับใช้ BASE ใหม่เสมอ (กันเด้งไปลิงก์เก่า)
--- - JSON parse ด้วย HttpService
--- - จำคีย์ผ่าน _G.UFO_SaveKeyState (48 ชม. หรือ expires_at จาก server)
--- - ปุ่ม Get Key เรียก /getkey ก่อน แล้วค่อยคัดลอกลิงก์ (มี popup ให้ก็อปเอง)
--- - ถ้า server ไม่ตอบ จะไม่ค้าง UI
--- - Fade-out แล้ว Destroy เมื่อสำเร็จ
+-- UFO HUB X — KEY UI (Server-Enabled, Web-only GET KEY)
+-- - ใช้ /verify?key=&uid=&place= สำหรับตรวจคีย์
+-- - ปุ่ม Get Key จะ "คัดลอกลิงก์หน้าเว็บ" เท่านั้น (ไม่เรียก /getkey ในเกม)
+-- - ปลอดภัยต่อรายได้ฝั่งเว็บแน่นอน
 --========================================================
 
 -------------------- Safe Prelude --------------------
@@ -84,16 +80,11 @@ local SUB       = Color3.fromRGB(22,22,22)
 local RED       = Color3.fromRGB(210,60,60)
 local GREEN     = Color3.fromRGB(60,200,120)
 
--------------------- Links / Servers --------------------
+-------------------- Links --------------------
 local DISCORD_URL = "https://discord.gg/your-server"
 
--- ใช้ฐานเดียวที่บังคับ (กันเด้งไปลิงก์เก่า)
-local SERVER_BASES = {
-    (_G.UFO_SERVER_BASE or FORCE_BASE),
-}
-local DEFAULT_TTL_SECONDS = 48*3600
-
 -------------------- Allow-list (ผ่านแน่) --------------------
+local DEFAULT_TTL_SECONDS = 48*3600
 local ALLOW_KEYS = {
     ["JJJMAX"]                 = { reusable=true, ttl=DEFAULT_TTL_SECONDS },
     ["GMPANUPHONGARTPHAIRIN"]  = { reusable=true, ttl=DEFAULT_TTL_SECONDS },
@@ -134,9 +125,8 @@ local function http_json_get(url)
     return true,data,nil
 end
 
--- เรียกเฉพาะ “ฐานที่ถูกบังคับ”
 local function json_get_forced(path_qs)
-    local base = sanitizeBase(_G.UFO_SERVER_BASE or SERVER_BASES[1] or FORCE_BASE)
+    local base = sanitizeBase(_G.UFO_SERVER_BASE or FORCE_BASE)
     local url  = base..path_qs
     local ok,data,err = http_json_get(url)
     if ok and data then
@@ -451,9 +441,8 @@ end
 btnSubmit.MouseButton1Click:Connect(doSubmit)
 btnSubmit.Activated:Connect(doSubmit)
 
--------------------- GET KEY (เรียก /getkey ก่อน แล้วค่อยคัดลอกลิงก์) --------------------
+-------------------- GET KEY (คัดลอกลิงก์เว็บเท่านั้น) --------------------
 local function showLinkPopup(urlText)
-    -- ป๊อปอัพเล็ก ๆ โชว์ลิงก์ให้ก็อปเองได้ กรณีเครื่องไม่มี setclipboard
     local pop = make("Frame",{
         Parent=panel, BackgroundColor3=Color3.fromRGB(18,18,18), BackgroundTransparency=0.1,
         Size=UDim2.new(1,-56,0,86), Position=UDim2.new(0,28,0,324+50+12), ZIndex=80
@@ -488,7 +477,7 @@ local function showLinkPopup(urlText)
     end)
     make("TextLabel",{
         Parent=pop, BackgroundTransparency=1,
-        Text="ถ้าไม่มีการคัดลอกอัตโนมัติ ให้ก็อปจากช่องได้เลย",
+        Text="เปิดลิงก์นี้ในเว็บเพื่อทำขั้นตอนรับคีย์",
         Font=Enum.Font.Gotham, TextSize=12, TextColor3=Color3.fromRGB(180,180,180),
         Size=UDim2.new(1,-24,0,20), Position=UDim2.new(0,12,0,52)
     },{})
@@ -504,81 +493,35 @@ local btnGetKey = make("TextButton",{
 })
 
 btnGetKey.MouseButton1Click:Connect(function()
-    -- เปิดใช้งานปุ่มเสมอ
-    if not btnGetKey.Active then btnGetKey.Active = true end
-
-    -- บังคับใช้ฐานที่กำหนดทุกครั้ง
+    -- บังคับใช้ฐานที่กำหนดทุกครั้ง (กันจำฐานเก่า)
     _G.UFO_LAST_BASE   = FORCE_BASE
     _G.UFO_SERVER_BASE = FORCE_BASE
 
     local uid   = tostring(LP and LP.UserId or "")
     local place = tostring(game.PlaceId or "")
 
-    -- ลิงก์หน้า UI (ไว้ให้ก็อป)
+    -- ลิงก์หน้า UI บนเว็บ (ไม่ใช่ API) → ให้ผู้ใช้ไปทำขั้นตอนในเว็บ
     local qs_ui  = string.format("/?uid=%s&place=%s",
         HttpService:UrlEncode(uid), HttpService:UrlEncode(place)
     )
     local base   = sanitizeBase(_G.UFO_SERVER_BASE or FORCE_BASE)
     local ui_url = base .. qs_ui
 
-    -- ลองเรียก /getkey
-    local qs_api = string.format("/getkey?uid=%s&place=%s",
-        HttpService:UrlEncode(uid), HttpService:UrlEncode(place)
-    )
-    local ok,data = json_get_forced(qs_api)
-
-    -- คัดลอกลิงก์เสมอ
-    setClipboard(ui_url)
-
-    if ok and data and data.ok then
-        btnGetKey.Text = "✅ Link copied!"
-        showToast("คัดลอกลิงก์หน้า UI แล้ว", true)
-        if data.expires_at then
-            local left = tonumber(data.expires_at) - os.time()
-            if left and left>0 then
-                setStatus(("คีย์ถูกจองแล้ว • เหลือเวลา ~%d ชม."):format(math.floor(left/3600)), true)
-            end
-        end
+    -- ❌ ไม่เรียก /getkey ที่นี่ (เพื่อให้สร้างคีย์เฉพาะบนเว็บเท่านั้น)
+    if setclipboard then
+        pcall(setclipboard, ui_url)
+        showToast("คัดลอกลิงก์หน้าเว็บแล้ว", true)
+        setStatus("เปิดลิงก์ในเว็บเพื่อรับคีย์ แล้วค่อยนำมากรอกที่นี่", true)
     else
-        btnGetKey.Text = "⚠️ Copied (server?)"
-        showToast("คัดลอกลิงก์หน้า UI แล้ว แต่เซิร์ฟเวอร์ไม่ตอบ", false)
+        showLinkPopup(ui_url)
+        showToast("ก็อปจากกล่องลิงก์ได้เลย", true)
     end
 
-    -- คืนค่าให้ปุ่มกดได้อีก
+    -- เอฟเฟ็กต์ปุ่มเล็กน้อย แล้วคืนค่า
+    btnGetKey.Text = "✅ Link copied!"
     task.delay(1.6, function()
         if btnGetKey and btnGetKey.Parent then
-            btnGetKey.Text   = "🔐  Get Key"
-            btnGetKey.Active = true
+            btnGetKey.Text = "🔐  Get Key"
         end
     end)
-end)
-
--------------------- Support row --------------------
-local supportRow = make("Frame",{
-    Parent=panel, AnchorPoint=Vector2.new(0.5,1),
-    Position=UDim2.new(0.5,0,1,-18), Size=UDim2.new(1,-56,0,24), BackgroundTransparency=1
-},{})
-make("UIListLayout",{
-    Parent=supportRow, FillDirection=Enum.FillDirection.HORIZONTAL,
-    HorizontalAlignment=Enum.HorizontalAlignment.Center, VerticalAlignment=Enum.VerticalAlignment.Center,
-    SortOrder=Enum.SortOrder.LayoutOrder, Padding=UDim.new(0,6)
-},{})
-make("TextLabel",{
-    Parent=supportRow, LayoutOrder=1, BackgroundTransparency=1,
-    Font=Enum.Font.Gotham, TextSize=16, Text="Need support?",
-    TextColor3=Color3.fromRGB(200,200,200), AutomaticSize=Enum.AutomaticSize.X
-},{})
-local btnDiscord = make("TextButton",{
-    Parent=supportRow, LayoutOrder=2, BackgroundTransparency=1,
-    Font=Enum.Font.GothamBold, TextSize=16, Text="Join the Discord",
-    TextColor3=ACCENT, AutomaticSize=Enum.AutomaticSize.X
-},{})
-btnDiscord.MouseButton1Click:Connect(function()
-    if setclipboard then
-        pcall(setclipboard, DISCORD_URL)
-        showToast("คัดลอกลิงก์ Discord แล้ว", true)
-    else
-        setStatus("Discord: "..DISCORD_URL, true)
-        showToast("คัดลอกลิงก์จาก status ได้เลย", true)
-    end
 end)
