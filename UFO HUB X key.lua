@@ -580,5 +580,97 @@ btnDiscord.MouseButton1Click:Connect(function()
     else
         setStatus("Discord: "..DISCORD_URL, true)
         showToast("คัดลอกลิงก์จาก status ได้เลย", true)
+        --====================[ PATCH+: Auto fetch key & fill UI (ADD-ONLY) ]====================
+-- ตั้งค่าสำหรับ auto-submit หลังจากได้คีย์ (เปลี่ยนเป็น false ถ้าอยากให้แค่ใส่คีย์เฉย ๆ)
+_G.UFO_AUTO_SUBMIT_GETKEY = (_G.UFO_AUTO_SUBMIT_GETKEY ~= false)
+
+-- helper: แปลง expires_at (unix seconds) -> os.time()+ttl fallback
+local function _calc_expire(expires_at)
+    local now = os.time()
+    local def = now + (DEFAULT_TTL_SECONDS)
+    local n = tonumber(expires_at)
+    if n and n > (10^9) then
+        -- บางเซิร์ฟให้เป็น ms
+        if n > (10^12) then return math.floor(n/1000) end
+        return n
+    elseif n and n > (10^6) then
+        return n
     end
+    return def
+end
+
+-- เรียก /getkey แล้วดึง key จากเซิร์ฟเวอร์มาใส่ในช่อง พร้อมตั้ง expired state
+local function FetchServerKeyAndFill()
+    -- ใช้ฐานที่บังคับ
+    local base = sanitizeBase(_G.UFO_SERVER_BASE or FORCE_BASE)
+    local uid   = tostring(LP and LP.UserId or "")
+    local place = tostring(game.PlaceId or "")
+
+    -- สร้าง URL /getkey
+    local qs_api = string.format("/getkey?uid=%s&place=%s",
+        HttpService:UrlEncode(uid), HttpService:UrlEncode(place)
+    )
+
+    setStatus("กำลังขอคีย์จากเซิร์ฟเวอร์...", nil)
+
+    -- timeout ป้องกันค้าง
+    local done = false
+    task.delay(6, function()
+        if not done then
+            setStatus("ช้าผิดปกติ ลองใหม่อีกครั้งได้", false)
+        end
+    end)
+
+    task.spawn(function()
+        local ok, data = json_get_forced(qs_api)
+        done = true
+        if (not ok) or (not data) then
+            showToast("เชื่อมต่อเซิร์ฟเวอร์ไม่ได้", false)
+            setStatus("เชื่อมต่อเซิร์ฟเวอร์ไม่ได้", false)
+            return
+        end
+
+        if data.ok and data.key then
+            local k = tostring(data.key)
+            local exp = _calc_expire(data.expires_at)
+
+            -- ใส่คีย์ลงช่องให้เลย
+            keyBox.Text = k
+            setStatus("ได้คีย์จากเซิร์ฟเวอร์แล้ว ✔", true)
+            showToast("ดึงคีย์สำเร็จ", true)
+
+            -- บันทึกอายุคีย์ (ถ้ามี callback ของคุณไว้)
+            if _G.UFO_SaveKeyState then
+                pcall(_G.UFO_SaveKeyState, k, exp, true)
+            end
+
+            -- ส่งคีย์ให้อัตโนมัติ (ถ้าตั้งค่าไว้)
+            if _G.UFO_AUTO_SUBMIT_GETKEY then
+                task.delay(0.05, function()
+                    if btnSubmit and btnSubmit.Parent then
+                        doSubmit()
+                    end
+                end)
+            end
+        else
+            local reason = (data and data.reason) and tostring(data.reason) or "invalid_response"
+            showToast("ขอคีย์ไม่สำเร็จ: "..reason, false)
+            setStatus("ขอคีย์ไม่สำเร็จ: "..reason, false)
+        end
+    end)
+end
+
+-- ผูก “ตัวช่วย” เข้ากับปุ่ม Get Key เดิม แบบไม่รบกวน handler เดิม
+-- (ของเดิมจะยังคัดลอกลิงก์เหมือนเดิม แล้วเราจะยิงขอคีย์อีกรอบเพื่อดึง key มาใส่ช่อง)
+btnGetKey.MouseButton1Click:Connect(function()
+    -- ถ้าปุ่มเดิมทำงานเสร็จ ให้เว้นจังหวะสั้น ๆ แล้วค่อยดึงคีย์จริงมาใส่
+    task.delay(0.15, function()
+        pcall(FetchServerKeyAndFill)
+    end)
+end)
+
+-- ป้องกันกรณีคุณเรียกจากที่อื่น: เปิดใช้ผ่านฟังก์ชันสาธารณะได้
+_G.UFO_FORCE_FETCH_KEY = FetchServerKeyAndFill
+--===============================================================================
+    end end
 end)
