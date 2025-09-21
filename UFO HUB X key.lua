@@ -4,7 +4,7 @@
 -- - JSON parse ด้วย HttpService
 -- - จำอายุคีย์ผ่าน _G.UFO_SaveKeyState (48 ชม. หรือ expires_at จาก server)
 -- - ปุ่ม Get Key จะเรียก /getkey ล่วงหน้า แล้วค่อยคัดลอกลิงก์
--- - รองรับหลายเซิร์ฟเวอร์ (failover & retry)
+-- - รองรับหลายเซิร์ฟเวอร์ (failover & "จำฐานที่ตอบได้ล่าสุด")
 -- - Fade-out แล้ว Destroy เมื่อสำเร็จ
 --========================================================
 
@@ -71,11 +71,36 @@ local GREEN     = Color3.fromRGB(60,200,120)
 -------------------- Links / Servers --------------------
 local DISCORD_URL = "https://discord.gg/your-server"
 
--- ❇️ บังคับเซิร์ฟเวอร์หลักตามที่ขอ
+-- ❇️ กำหนดฐานเซิร์ฟเวอร์ (เรียงตามความสำคัญ)
+--   ถ้ามี _G.UFO_SERVER_BASE จะ override เป็นตัวนั้นทันที
 local SERVER_BASES = {
-    "https://ufo-hub-x-key-umoq.onrender.com", -- หลัก
-    -- "https://ufo-hub-x-server-key2.onrender.com", -- สำรอง (ถ้ามี)
+    -- ใส่ฐานใหม่ของนายไว้ "ด้านหน้า" เสมอ ถ้าอยากให้ใช้เป็นค่าเริ่มต้น
+    "https://ufo-hub-x-key-umoq.onrender.com", -- ตัวอย่าง: ฐานหลักเดิม
+    -- "https://ufo-hub-x-key-ใหม่.onrender.com", -- ถ้ามีฐานใหม่ ใส่บรรทัดนี้แทนบรรทัดบน แล้วคอมเมนต์ตัวเก่า
 }
+
+-- override ผ่าน _G (ไม่ต้องแก้ไฟล์ในครั้งต่อไป)
+do
+    local ov = rawget(_G, "UFO_SERVER_BASE")
+    if typeof(ov) == "string" and #ov > 0 then
+        SERVER_BASES = { (ov:gsub("%s+",""):gsub("[/]+$","")) }
+    end
+end
+
+-- จะเก็บ “ฐานที่ตอบได้ล่าสุด” ไว้ใช้ซ้ำ
+_G.UFO_LAST_BASE = _G.UFO_LAST_BASE or nil
+local function sanitizeBase(b)
+    b = tostring(b or ""):gsub("%s+","")
+    return (b:gsub("[/]+$",""))
+end
+local function pickBase()
+    if _G.UFO_LAST_BASE and #tostring(_G.UFO_LAST_BASE)>0 then
+        return sanitizeBase(_G.UFO_LAST_BASE)
+    end
+    local b = SERVER_BASES[1] or ""
+    return sanitizeBase(b)
+end
+
 local DEFAULT_TTL_SECONDS = 48*3600
 
 -------------------- Allow-list (ผ่านแน่) --------------------
@@ -120,16 +145,20 @@ local function http_json_get(url)
     return true,data,nil
 end
 
+-- ❇️ เพิ่มการคืนค่า "ฐานที่ตอบสำเร็จ" ออกมา เพื่อให้จำได้
 local function json_get_with_failover(path_qs)
     local last_err="no_servers"
     for _,base in ipairs(SERVER_BASES) do
-        base = tostring(base or ""):gsub("%s+",""):gsub("[/]+$","")
+        base = sanitizeBase(base)
         if #base>0 then
             local url = (base..path_qs)
             for i=0,2 do
                 if i>0 then task.wait(0.6*i) end
                 local ok,data,err = http_json_get(url)
-                if ok and data then return true,data end
+                if ok and data then
+                    _G.UFO_LAST_BASE = base  -- จำฐานที่ตอบได้ล่าสุด
+                    return true,data,base
+                end
                 last_err = err or "http_error"
             end
         end
@@ -445,19 +474,15 @@ local btnGetKey = make("TextButton",{
 btnGetKey.MouseButton1Click:Connect(function()
     local uid   = tostring(LP and LP.UserId or "")
     local place = tostring(game.PlaceId or "")
-    local base  = (SERVER_BASES and SERVER_BASES[1]) or ""
-    if base=="" then
-        showToast("ไม่มีเซิร์ฟเวอร์ให้เรียก", false)
-        return
-    end
 
-    local qs   = string.format("/getkey?uid=%s&place=%s",
+    local qs = string.format("/getkey?uid=%s&place=%s",
         HttpService:UrlEncode(uid), HttpService:UrlEncode(place)
     )
-    local url  = base .. qs
 
-    -- เรียก /getkey ล่วงหน้า (allocate key ให้ uid:place นี้)
-    local ok,data = json_get_with_failover(qs)
+    -- เรียกด้วย failover เพื่อหา "ฐานที่ตอบจริง"
+    local ok,data,base_used = json_get_with_failover(qs)
+    local base = sanitizeBase(base_used or pickBase())
+    local url  = base .. qs
 
     if ok and data and data.ok then
         setClipboard(url)
@@ -471,7 +496,7 @@ btnGetKey.MouseButton1Click:Connect(function()
             end
         end
     else
-        -- ถ้าเรียกไม่สำเร็จ ก็ยังคัดลอกลิงก์ดิบไว้ให้
+        -- ถ้าล้มเหลว ก็ยังคัดลอกลิงก์ฐานที่เลือกไว้ให้
         setClipboard(url)
         btnGetKey.Text = "⚠️ Copied (server?)"
         showToast("คัดลอกลิงก์แล้ว แต่เรียกเซิร์ฟเวอร์ไม่สำเร็จ", false)
@@ -507,11 +532,15 @@ local btnDiscord = make("TextButton",{
 btnDiscord.MouseButton1Click:Connect(function()
     setClipboard(DISCORD_URL)
     btnDiscord.Text="✅ Link copied!"
-    task.delay(1.5,function() btnDiscord.Text="Join the Discord" end)
+    task.delay(1.5,function()
+        if btnDiscord and btnDiscord.Parent then
+            btnDiscord.Text="Join the Discord"
+        end
+    end)
 end)
 
 -------------------- Open Animation --------------------
 panel.Position = UDim2.fromScale(0.5,0.5) + UDim2.fromOffset(0,14)
 TS:Create(panel, TweenInfo.new(.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-    Position = UDim2.fromScale(0.5,0.5)
+    Position=UDim2.fromScale(0.5,0.5)
 }):Play()
