@@ -1,10 +1,10 @@
 --========================================================
 -- UFO HUB X — KEY UI (Server-Enabled, Single File)
 -- - API JSON: /verify?key=&uid=&place=  และ  /getkey
+-- - บังคับใช้ BASE ใหม่เสมอ (ตัดพฤติกรรมจำลิงก์เก่า)
 -- - JSON parse ด้วย HttpService
 -- - จำอายุคีย์ผ่าน _G.UFO_SaveKeyState (48 ชม. หรือ expires_at จาก server)
--- - ปุ่ม Get Key จะเรียก /getkey ล่วงหน้า แล้วค่อยคัดลอกลิงก์
--- - รองรับหลายเซิร์ฟเวอร์ (failover & "จำฐานที่ตอบได้ล่าสุด")
+-- - ปุ่ม Get Key จะเรียก /getkey ล่วงหน้า แล้วค่อยคัดลอกลิงก์ “ของฐานที่ตอบจริง”
 -- - Fade-out แล้ว Destroy เมื่อสำเร็จ
 --========================================================
 
@@ -59,6 +59,21 @@ local function SOFT_PARENT(gui)
     end
 end
 
+-------------------- FORCE SERVER --------------------
+-- ❗ เปลี่ยน URL ตรงนี้ถ้ามีฐานใหม่
+_G.UFO_LAST_BASE = nil   -- เคลียร์ความจำเก่า
+local FORCE_BASE = "https://ufo-hub-x-key-umoq.onrender.com"
+
+local function sanitizeBase(b)
+    b = tostring(b or ""):gsub("%s+","")
+    return (b:gsub("[/]+$",""))
+end
+if type(FORCE_BASE)=="string" and #FORCE_BASE>0 then
+    FORCE_BASE = sanitizeBase(FORCE_BASE)
+    _G.UFO_SERVER_BASE = FORCE_BASE
+    _G.UFO_LAST_BASE   = FORCE_BASE
+end
+
 -------------------- Theme --------------------
 local LOGO_ID   = 112676905543996
 local ACCENT    = Color3.fromRGB(0,255,140)
@@ -71,36 +86,10 @@ local GREEN     = Color3.fromRGB(60,200,120)
 -------------------- Links / Servers --------------------
 local DISCORD_URL = "https://discord.gg/your-server"
 
--- ❇️ กำหนดฐานเซิร์ฟเวอร์ (เรียงตามความสำคัญ)
---   ถ้ามี _G.UFO_SERVER_BASE จะ override เป็นตัวนั้นทันที
+-- ใช้ฐานเดียวที่บังคับ (ตัดพฤติกรรม failover เพื่อกันเด้งไปเก่า)
 local SERVER_BASES = {
-    -- ใส่ฐานใหม่ของนายไว้ "ด้านหน้า" เสมอ ถ้าอยากให้ใช้เป็นค่าเริ่มต้น
-    "https://ufo-hub-x-key-umoq.onrender.com", -- ตัวอย่าง: ฐานหลักเดิม
-    -- "https://ufo-hub-x-key-ใหม่.onrender.com", -- ถ้ามีฐานใหม่ ใส่บรรทัดนี้แทนบรรทัดบน แล้วคอมเมนต์ตัวเก่า
+    (_G.UFO_SERVER_BASE or FORCE_BASE),
 }
-
--- override ผ่าน _G (ไม่ต้องแก้ไฟล์ในครั้งต่อไป)
-do
-    local ov = rawget(_G, "UFO_SERVER_BASE")
-    if typeof(ov) == "string" and #ov > 0 then
-        SERVER_BASES = { (ov:gsub("%s+",""):gsub("[/]+$","")) }
-    end
-end
-
--- จะเก็บ “ฐานที่ตอบได้ล่าสุด” ไว้ใช้ซ้ำ
-_G.UFO_LAST_BASE = _G.UFO_LAST_BASE or nil
-local function sanitizeBase(b)
-    b = tostring(b or ""):gsub("%s+","")
-    return (b:gsub("[/]+$",""))
-end
-local function pickBase()
-    if _G.UFO_LAST_BASE and #tostring(_G.UFO_LAST_BASE)>0 then
-        return sanitizeBase(_G.UFO_LAST_BASE)
-    end
-    local b = SERVER_BASES[1] or ""
-    return sanitizeBase(b)
-end
-
 local DEFAULT_TTL_SECONDS = 48*3600
 
 -------------------- Allow-list (ผ่านแน่) --------------------
@@ -108,7 +97,6 @@ local ALLOW_KEYS = {
     ["JJJMAX"]                 = { reusable=true, ttl=DEFAULT_TTL_SECONDS },
     ["GMPANUPHONGARTPHAIRIN"]  = { reusable=true, ttl=DEFAULT_TTL_SECONDS },
 }
-
 local function normKey(s)
     s = tostring(s or ""):gsub("%c",""):gsub("%s+",""):gsub("[^%w]","")
     return string.upper(s)
@@ -145,25 +133,16 @@ local function http_json_get(url)
     return true,data,nil
 end
 
--- ❇️ เพิ่มการคืนค่า "ฐานที่ตอบสำเร็จ" ออกมา เพื่อให้จำได้
-local function json_get_with_failover(path_qs)
-    local last_err="no_servers"
-    for _,base in ipairs(SERVER_BASES) do
-        base = sanitizeBase(base)
-        if #base>0 then
-            local url = (base..path_qs)
-            for i=0,2 do
-                if i>0 then task.wait(0.6*i) end
-                local ok,data,err = http_json_get(url)
-                if ok and data then
-                    _G.UFO_LAST_BASE = base  -- จำฐานที่ตอบได้ล่าสุด
-                    return true,data,base
-                end
-                last_err = err or "http_error"
-            end
-        end
+-- เรียกเฉพาะ “ฐานที่ถูกบังคับ”
+local function json_get_forced(path_qs)
+    local base = sanitizeBase(_G.UFO_SERVER_BASE or SERVER_BASES[1] or FORCE_BASE)
+    local url  = base..path_qs
+    local ok,data,err = http_json_get(url)
+    if ok and data then
+        _G.UFO_LAST_BASE = base
+        return true,data,base
     end
-    return false,nil,last_err
+    return false,nil,err
 end
 
 local function verifyWithServer(k)
@@ -174,7 +153,7 @@ local function verifyWithServer(k)
         HttpService:UrlEncode(uid),
         HttpService:UrlEncode(place)
     )
-    local ok,data = json_get_with_failover(qs)
+    local ok,data = json_get_forced(qs)
     if not ok or not data then return false,"server_unreachable",nil end
     if data.ok and data.valid then
         local exp = tonumber(data.expires_at) or (os.time()+DEFAULT_TTL_SECONDS)
@@ -232,6 +211,7 @@ local panel = make("Frame",{
     make("UIStroke",{Color=ACCENT, Thickness=2, Transparency=0.1})
 })
 
+-- close
 local btnClose = make("TextButton",{
     Parent=panel, Text="X", Font=Enum.Font.GothamBold, TextSize=20, TextColor3=Color3.new(1,1,1),
     AutoButtonColor=false, BackgroundColor3=Color3.fromRGB(210,35,50),
@@ -243,6 +223,7 @@ btnClose.MouseButton1Click:Connect(function()
     pcall(function() if gui and gui.Parent then gui:Destroy() end end)
 end)
 
+-- header
 local head = make("Frame",{
     Parent=panel, BackgroundTransparency=0.15, BackgroundColor3=Color3.fromRGB(14,14,14),
     Size=UDim2.new(1,-28,0,68), Position=UDim2.new(0,14,0,14), ZIndex=5
@@ -260,6 +241,7 @@ make("TextLabel",{
     Text="KEY SYSTEM", TextColor3=ACCENT, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=6
 },{})
 
+-- title
 local titleGroup = make("Frame",{Parent=panel, BackgroundTransparency=1, Position=UDim2.new(0,28,0,102), Size=UDim2.new(1,-56,0,76)},{})
 make("UIListLayout",{
     Parent=titleGroup, FillDirection=Enum.FillDirection.Vertical,
@@ -282,6 +264,7 @@ make("TextLabel",{Parent=titleLine2, LayoutOrder=1, BackgroundTransparency=1,
 make("TextLabel",{Parent=titleLine2, LayoutOrder=2, BackgroundTransparency=1,
     Font=Enum.Font.GothamBlack, TextSize=32, Text="HUB X", TextColor3=Color3.new(1,1,1), AutomaticSize=Enum.AutomaticSize.X},{})
 
+-- key input
 make("TextLabel",{
     Parent=panel, BackgroundTransparency=1, Position=UDim2.new(0,28,0,188),
     Size=UDim2.new(0,60,0,22), Font=Enum.Font.Gotham, TextSize=16,
@@ -298,6 +281,7 @@ local keyBox = make("TextBox",{
     (function() keyStroke=make("UIStroke",{Color=ACCENT, Transparency=0.75}); return keyStroke end)()
 })
 
+-- submit
 local btnSubmit = make("TextButton",{
     Parent=panel, Text="🔒  Submit Key", Font=Enum.Font.GothamBlack, TextSize=20,
     TextColor3=Color3.new(1,1,1), AutoButtonColor=false, BackgroundColor3=RED, BorderSizePixel=0,
@@ -306,6 +290,7 @@ local btnSubmit = make("TextButton",{
     make("UICorner",{CornerRadius=UDim.new(0,14)})
 })
 
+-- toast
 local toast = make("TextLabel",{
     Parent=panel, BackgroundTransparency=0.15, BackgroundColor3=Color3.fromRGB(30,30,30),
     Size=UDim2.fromOffset(0,32), Position=UDim2.new(0.5,0,0,16),
@@ -328,6 +313,7 @@ local function showToast(msg, ok)
     end)
 end
 
+-- status line
 local statusLabel = make("TextLabel",{
     Parent=panel, BackgroundTransparency=1, Position=UDim2.new(0,28,0,268+50+6),
     Size=UDim2.new(1,-56,0,24), Font=Enum.Font.Gotham, TextSize=14, Text="",
@@ -344,6 +330,7 @@ local function setStatus(txt, ok)
     end
 end
 
+-- error fx
 local function flashInputError()
     if keyStroke then
         local old=keyStroke.Color
@@ -360,6 +347,7 @@ local function flashInputError()
     end)
 end
 
+-- fade destroy
 local function fadeOutAndDestroy()
     for _,d in ipairs(panel:GetDescendants()) do
         pcall(function()
@@ -381,6 +369,7 @@ local function fadeOutAndDestroy()
     task.delay(0.22,function() if gui and gui.Parent then gui:Destroy() end end)
 end
 
+-- submit button state
 local submitting=false
 local function refreshSubmit()
     if submitting then return end
@@ -413,7 +402,7 @@ local function forceErrorUI(mainText, toastText)
 end
 
 local function verifyWithAllowedOrServer(k)
-    local allowed,nk,meta = isAllowedKey(k)
+    local allowed,_,meta = isAllowedKey(k)
     if allowed then
         local exp = os.time() + (tonumber(meta.ttl) or DEFAULT_TTL_SECONDS)
         return true,nil,exp
@@ -472,6 +461,10 @@ local btnGetKey = make("TextButton",{
 })
 
 btnGetKey.MouseButton1Click:Connect(function()
+    -- บังคับให้ใช้ฐานที่กำหนดเท่านั้น
+    _G.UFO_LAST_BASE = FORCE_BASE
+    _G.UFO_SERVER_BASE = FORCE_BASE
+
     local uid   = tostring(LP and LP.UserId or "")
     local place = tostring(game.PlaceId or "")
 
@@ -479,9 +472,9 @@ btnGetKey.MouseButton1Click:Connect(function()
         HttpService:UrlEncode(uid), HttpService:UrlEncode(place)
     )
 
-    -- เรียกด้วย failover เพื่อหา "ฐานที่ตอบจริง"
-    local ok,data,base_used = json_get_with_failover(qs)
-    local base = sanitizeBase(base_used or pickBase())
+    -- เรียกจริงกับฐานบังคับ
+    local ok,data,base_used = json_get_forced(qs)
+    local base = sanitizeBase(base_used or FORCE_BASE)
     local url  = base .. qs
 
     if ok and data and data.ok then
@@ -496,7 +489,7 @@ btnGetKey.MouseButton1Click:Connect(function()
             end
         end
     else
-        -- ถ้าล้มเหลว ก็ยังคัดลอกลิงก์ฐานที่เลือกไว้ให้
+        -- ถ้าล้มเหลว ก็ยังคัดลอกลิงก์ฐานบังคับให้
         setClipboard(url)
         btnGetKey.Text = "⚠️ Copied (server?)"
         showToast("คัดลอกลิงก์แล้ว แต่เรียกเซิร์ฟเวอร์ไม่สำเร็จ", false)
@@ -532,11 +525,7 @@ local btnDiscord = make("TextButton",{
 btnDiscord.MouseButton1Click:Connect(function()
     setClipboard(DISCORD_URL)
     btnDiscord.Text="✅ Link copied!"
-    task.delay(1.5,function()
-        if btnDiscord and btnDiscord.Parent then
-            btnDiscord.Text="Join the Discord"
-        end
-    end)
+    task.delay(1.5,function() if btnDiscord then btnDiscord.Text="Join the Discord" end end)
 end)
 
 -------------------- Open Animation --------------------
