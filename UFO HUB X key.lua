@@ -5,6 +5,7 @@
 -- - JSON parse ด้วย HttpService
 -- - จำอายุคีย์ผ่าน _G.UFO_SaveKeyState (48 ชม. หรือ expires_at จาก server)
 -- - ปุ่ม Get Key จะเรียก /getkey ล่วงหน้า แล้วค่อยคัดลอกลิงก์ “ของฐานที่ตอบจริง”
+-- - ถ้าคัดลอกอัตโนมัติไม่ได้ จะแสดงกล่องลิงก์ให้ก็อปเอง
 -- - Fade-out แล้ว Destroy เมื่อสำเร็จ
 --========================================================
 
@@ -335,7 +336,7 @@ local function flashInputError()
     if keyStroke then
         local old=keyStroke.Color
         tween(keyStroke,{Color=Color3.fromRGB(255,90,90), Transparency=0},.05)
-        task.delay(.22,function() tween(keyStroke,{Color=old, Transparency=0.75},.12) end)
+        task.delay(0.22,function() tween(keyStroke,{Color=old, Transparency=0.75},.12) end)
     end
     local p0=btnSubmit.Position
     TS:Create(btnSubmit, TweenInfo.new(0.05),{Position=p0+UDim2.fromOffset(-5,0)}):Play()
@@ -451,6 +452,48 @@ btnSubmit.MouseButton1Click:Connect(doSubmit)
 btnSubmit.Activated:Connect(doSubmit)
 
 -------------------- GET KEY (เรียก /getkey ก่อน แล้วค่อยคัดลอกลิงก์) --------------------
+local function showLinkPopup(urlText)
+    -- ป๊อปอัพเล็ก ๆ โชว์ลิงก์ให้ก็อปเองได้ กรณีเครื่องไม่มี setclipboard
+    local pop = make("Frame",{
+        Parent=panel, BackgroundColor3=Color3.fromRGB(18,18,18), BackgroundTransparency=0.1,
+        Size=UDim2.new(1,-56,0,86), Position=UDim2.new(0,28,0,324+50+12), ZIndex=80
+    },{
+        make("UICorner",{CornerRadius=UDim.new(0,12)}),
+        make("UIStroke",{Color=ACCENT, Transparency=0.5}),
+    })
+    local tb = make("TextBox",{
+        Parent=pop, ClearTextOnFocus=false, Text=urlText, Font=Enum.Font.Gotham,
+        TextSize=14, TextColor3=FG, BackgroundColor3=SUB, BorderSizePixel=0,
+        Size=UDim2.new(1,-108,0,36), Position=UDim2.new(0,12,0,12)
+    },{
+        make("UICorner",{CornerRadius=UDim.new(0,8)}),
+        make("UIStroke",{Color=ACCENT, Transparency=0.75})
+    })
+    local btnCopy = make("TextButton",{
+        Parent=pop, Text="Copy", Font=Enum.Font.GothamBold, TextSize=14,
+        TextColor3=Color3.new(0,0,0), AutoButtonColor=false, BackgroundColor3=ACCENT, BorderSizePixel=0,
+        Size=UDim2.new(0,80,0,36), Position=UDim2.new(1,-92,0,12)
+    },{
+        make("UICorner",{CornerRadius=UDim.new(0,8)})
+    })
+    btnCopy.MouseButton1Click:Connect(function()
+        if setclipboard then
+            pcall(setclipboard, urlText)
+            showToast("คัดลอกแล้ว", true)
+            btnCopy.Text = "Copied!"
+            task.delay(1.2,function() if btnCopy then btnCopy.Text="Copy" end end)
+        else
+            showToast("ก็อปจากช่องด้านซ้ายได้เลย", true)
+        end
+    end)
+    make("TextLabel",{
+        Parent=pop, BackgroundTransparency=1,
+        Text="ถ้าไม่มีการคัดลอกอัตโนมัติ ให้ก็อปจากช่องได้เลย",
+        Font=Enum.Font.Gotham, TextSize=12, TextColor3=Color3.fromRGB(180,180,180),
+        Size=UDim2.new(1,-24,0,20), Position=UDim2.new(0,12,0,52)
+    },{})
+end
+
 local btnGetKey = make("TextButton",{
     Parent=panel, Text="🔐  Get Key", Font=Enum.Font.GothamBold, TextSize=18,
     TextColor3=Color3.new(1,1,1), AutoButtonColor=false, BackgroundColor3=SUB, BorderSizePixel=0,
@@ -462,8 +505,9 @@ local btnGetKey = make("TextButton",{
 
 btnGetKey.MouseButton1Click:Connect(function()
     -- บังคับใช้ฐานที่กำหนด
-    _G.UFO_LAST_BASE   = FORCE_BASE
-    _G.UFO_SERVER_BASE = FORCE_BASE
+    local BASE = FORCE_BASE
+    _G.UFO_LAST_BASE   = BASE
+    _G.UFO_SERVER_BASE = BASE
 
     local uid   = tostring(LP and LP.UserId or "")
     local place = tostring(game.PlaceId or "")
@@ -471,16 +515,29 @@ btnGetKey.MouseButton1Click:Connect(function()
     local qs = string.format("/getkey?uid=%s&place=%s",
         HttpService:UrlEncode(uid), HttpService:UrlEncode(place)
     )
+    local url  = BASE .. qs
 
-    local ok,data,base_used = json_get_forced(qs)
-    local base = sanitizeBase(base_used or FORCE_BASE)
-    local url  = base .. qs
+    btnGetKey.Text = "⏳ Getting..."
+    btnGetKey.AutoButtonColor = false
+
+    -- เรียกจริงกับฐานบังคับ
+    local ok,data = (function()
+        local ok1,js = json_get_forced(qs)
+        return ok1, js
+    end)()
+
+    -- คัดลอกลิงก์หรือโชว์กล่องลิงก์แน่ ๆ
+    local copied=false
+    if setclipboard then copied = pcall(setclipboard, url) and true or false end
+    if copied then
+        showToast("ลิงก์รับคีย์ถูกคัดลอกแล้ว", true)
+    else
+        showLinkPopup(url)
+        showToast("ก็อปลิงก์จากกล่องได้เลย", true)
+    end
 
     if ok and data and data.ok then
-        setClipboard(url)
-        btnGetKey.Text = "✅ Link copied!"
-        showToast("ลิงก์รับคีย์ถูกคัดลอกแล้ว", true)
-
+        btnGetKey.Text = "✅ Link ready"
         if data.expires_at then
             local left = tonumber(data.expires_at) - os.time()
             if left and left>0 then
@@ -488,15 +545,12 @@ btnGetKey.MouseButton1Click:Connect(function()
             end
         end
     else
-        setClipboard(url)
         btnGetKey.Text = "⚠️ Copied (server?)"
-        showToast("คัดลอกลิงก์แล้ว แต่เรียกเซิร์ฟเวอร์ไม่สำเร็จ", false)
+        setStatus("เรียกเซิร์ฟเวอร์ไม่สำเร็จ แต่คัดลอกลิงก์ให้แล้ว", false)
     end
 
-    task.delay(1.6, function()
-        if btnGetKey and btnGetKey.Parent then
-            btnGetKey.Text = "🔐  Get Key"
-        end
+    task.delay(1.8, function()
+        if btnGetKey and btnGetKey.Parent then btnGetKey.Text = "🔐  Get Key" end
     end)
 end)
 
@@ -521,13 +575,17 @@ local btnDiscord = make("TextButton",{
     TextColor3=ACCENT, AutomaticSize=Enum.AutomaticSize.X
 },{})
 btnDiscord.MouseButton1Click:Connect(function()
-    setClipboard(DISCORD_URL)
-    btnDiscord.Text="✅ Link copied!"
-    task.delay(1.5,function() if btnDiscord and btnDiscord.Parent then btnDiscord.Text="Join the Discord" end end)
+    if setclipboard then
+        pcall(setclipboard, DISCORD_URL)
+        showToast("Discord link copied", true)
+    else
+        setStatus("DISCORD: "..DISCORD_URL, true)
+        showToast("Copy URL shown at status", true)
+    end
 end)
 
 -------------------- Open Animation --------------------
 panel.Position = UDim2.fromScale(0.5,0.5) + UDim2.fromOffset(0,14)
 TS:Create(panel, TweenInfo.new(.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-    Position = UDim2.fromScale(0.5,0.5)
+    Position=UDim2.fromScale(0.5,0.5)
 }):Play()
