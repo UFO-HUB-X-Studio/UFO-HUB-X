@@ -1,11 +1,11 @@
 --========================================================
 -- UFO HUB X — KEY UI (Server-Enabled, Single File)
 -- - API JSON: /verify?key=&uid=&place=  และ  /getkey
--- - บังคับใช้ BASE ใหม่เสมอ (ตัดพฤติกรรมจำลิงก์เก่า)
+-- - บังคับใช้ BASE ใหม่เสมอ (กันเด้งไปลิงก์เก่า)
 -- - JSON parse ด้วย HttpService
--- - จำอายุคีย์ผ่าน _G.UFO_SaveKeyState (48 ชม. หรือ expires_at จาก server)
--- - ปุ่ม Get Key จะเรียก /getkey ล่วงหน้า แล้วค่อยคัดลอกลิงก์ “ของฐานที่ตอบจริง”
--- - ถ้าคัดลอกอัตโนมัติไม่ได้ จะแสดงกล่องลิงก์ให้ก็อปเอง
+-- - จำคีย์ผ่าน _G.UFO_SaveKeyState (48 ชม. หรือ expires_at จาก server)
+-- - ปุ่ม Get Key เรียก /getkey ก่อน แล้วค่อยคัดลอกลิงก์ (มี popup ให้ก็อปเอง)
+-- - ถ้า server ไม่ตอบ จะไม่ค้าง UI
 -- - Fade-out แล้ว Destroy เมื่อสำเร็จ
 --========================================================
 
@@ -504,53 +504,60 @@ local btnGetKey = make("TextButton",{
 })
 
 btnGetKey.MouseButton1Click:Connect(function()
-    -- บังคับใช้ฐานที่กำหนด
-    local BASE = FORCE_BASE
-    _G.UFO_LAST_BASE   = BASE
-    _G.UFO_SERVER_BASE = BASE
+    -- บังคับใช้ฐานที่กำหนดทุกครั้ง
+    _G.UFO_LAST_BASE   = FORCE_BASE
+    _G.UFO_SERVER_BASE = FORCE_BASE
+
+    if btnGetKey.Active == false then return end
+    btnGetKey.Active = false
+    btnGetKey.Text = "⏳ Getting..."
 
     local uid   = tostring(LP and LP.UserId or "")
     local place = tostring(game.PlaceId or "")
 
-    local qs = string.format("/getkey?uid=%s&place=%s",
+    local qs  = string.format("/getkey?uid=%s&place=%s",
         HttpService:UrlEncode(uid), HttpService:UrlEncode(place)
     )
-    local url  = BASE .. qs
-
-    btnGetKey.Text = "⏳ Getting..."
-    btnGetKey.AutoButtonColor = false
 
     -- เรียกจริงกับฐานบังคับ
-    local ok,data = (function()
-        local ok1,js = json_get_forced(qs)
-        return ok1, js
-    end)()
-
-    -- คัดลอกลิงก์หรือโชว์กล่องลิงก์แน่ ๆ
-    local copied=false
-    if setclipboard then copied = pcall(setclipboard, url) and true or false end
-    if copied then
-        showToast("ลิงก์รับคีย์ถูกคัดลอกแล้ว", true)
-    else
-        showLinkPopup(url)
-        showToast("ก็อปลิงก์จากกล่องได้เลย", true)
-    end
+    local ok,data,base_used = json_get_forced(qs)
+    local base = sanitizeBase(base_used or FORCE_BASE)
+    local url  = base .. qs
 
     if ok and data and data.ok then
-        btnGetKey.Text = "✅ Link ready"
+        if setclipboard then
+            pcall(setclipboard, url)
+            btnGetKey.Text = "✅ Link copied!"
+            showToast("ลิงก์รับคีย์ถูกคัดลอกแล้ว", true)
+        else
+            btnGetKey.Text = "✅ Link ready"
+            showLinkPopup(url)
+            showToast("คัดลอกลิงก์จากช่องด้านล่างได้เลย", true)
+        end
+
         if data.expires_at then
             local left = tonumber(data.expires_at) - os.time()
             if left and left>0 then
                 setStatus(("คีย์ถูกจองแล้ว • เหลือเวลา ~%d ชม."):format(math.floor(left/3600)), true)
+            else
+                setStatus("คีย์ถูกจองแล้ว", true)
             end
+        else
+            setStatus("คีย์ถูกจองแล้ว", true)
         end
     else
+        -- เซิร์ฟเวอร์ไม่ตอบ / JSON เพี้ยน → ไม่ค้าง ให้ user ก็อปเองได้
+        showLinkPopup(url)
         btnGetKey.Text = "⚠️ Copied (server?)"
-        setStatus("เรียกเซิร์ฟเวอร์ไม่สำเร็จ แต่คัดลอกลิงก์ให้แล้ว", false)
+        showToast("เรียกเซิร์ฟเวอร์ไม่สำเร็จ • ใช้ลิงก์นี้แทน", false)
+        setStatus("เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ชั่วคราว — ลิงก์รับคีย์อยู่ด้านล่าง", false)
     end
 
-    task.delay(1.8, function()
-        if btnGetKey and btnGetKey.Parent then btnGetKey.Text = "🔐  Get Key" end
+    task.delay(1.6, function()
+        if btnGetKey and btnGetKey.Parent then
+            btnGetKey.Text = "🔐  Get Key"
+            btnGetKey.Active = true
+        end
     end)
 end)
 
@@ -577,15 +584,9 @@ local btnDiscord = make("TextButton",{
 btnDiscord.MouseButton1Click:Connect(function()
     if setclipboard then
         pcall(setclipboard, DISCORD_URL)
-        showToast("Discord link copied", true)
+        showToast("คัดลอกลิงก์ Discord แล้ว", true)
     else
-        setStatus("DISCORD: "..DISCORD_URL, true)
-        showToast("Copy URL shown at status", true)
+        setStatus("Discord: "..DISCORD_URL, true)
+        showToast("คัดลอกลิงก์จาก status ได้เลย", true)
     end
 end)
-
--------------------- Open Animation --------------------
-panel.Position = UDim2.fromScale(0.5,0.5) + UDim2.fromOffset(0,14)
-TS:Create(panel, TweenInfo.new(.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-    Position=UDim2.fromScale(0.5,0.5)
-}):Play()
