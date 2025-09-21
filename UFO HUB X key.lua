@@ -3,15 +3,15 @@
 -- - API JSON: /verify?key=&uid=&place=  และ  /getkey
 -- - JSON parse ด้วย HttpService
 -- - จำอายุคีย์ผ่าน _G.UFO_SaveKeyState (48 ชม. หรือ expires_at จาก server)
--- - ปุ่ม Get Key คัดลอกลิงก์พร้อม uid/place
+-- - ปุ่ม Get Key จะเรียก /getkey ล่วงหน้า แล้วค่อยคัดลอกลิงก์
 -- - รองรับหลายเซิร์ฟเวอร์ (failover & retry)
 -- - Fade-out แล้ว Destroy เมื่อสำเร็จ
 --========================================================
 
 -------------------- Safe Prelude --------------------
-local Players = game:GetService("Players")
-local CG      = game:GetService("CoreGui")
-local TS      = game:GetService("TweenService")
+local Players     = game:GetService("Players")
+local CG          = game:GetService("CoreGui")
+local TS          = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
 
 pcall(function() if not game:IsLoaded() then game.Loaded:Wait() end end)
@@ -71,7 +71,8 @@ local GREEN     = Color3.fromRGB(60,200,120)
 -------------------- Links / Servers --------------------
 local DISCORD_URL = "https://discord.gg/your-server"
 
-https SERVER_BASES = {
+-- ❇️ บังคับเซิร์ฟเวอร์หลักตามที่ขอ
+local SERVER_BASES = {
     "https://ufo-hub-x-key-umoq.onrender.com", -- หลัก
     -- "https://ufo-hub-x-server-key2.onrender.com", -- สำรอง (ถ้ามี)
 }
@@ -122,12 +123,15 @@ end
 local function json_get_with_failover(path_qs)
     local last_err="no_servers"
     for _,base in ipairs(SERVER_BASES) do
-        local url = (base..path_qs)
-        for i=0,2 do
-            if i>0 then task.wait(0.6*i) end
-            local ok,data,err = http_json_get(url)
-            if ok and data then return true,data end
-            last_err = err or "http_error"
+        base = tostring(base or ""):gsub("%s+",""):gsub("[/]+$","")
+        if #base>0 then
+            local url = (base..path_qs)
+            for i=0,2 do
+                if i>0 then task.wait(0.6*i) end
+                local ok,data,err = http_json_get(url)
+                if ok and data then return true,data end
+                last_err = err or "http_error"
+            end
         end
     end
     return false,nil,last_err
@@ -164,7 +168,6 @@ end
 local function setClipboard(s) if setclipboard then pcall(setclipboard, s) end end
 
 -------------------- Root GUI --------------------
--- ถ้ามีตัวเก่าอยู่ ย้าย parent ให้ทน แล้วสร้างใหม่ (ไม่ลบของเดิม)
 pcall(function()
     local old = CG:FindFirstChild("UFOHubX_KeyUI")
     if old and old:IsA("ScreenGui") then
@@ -180,7 +183,6 @@ gui.ResetOnSpawn=false
 gui.ZIndexBehavior=Enum.ZIndexBehavior.Sibling
 SOFT_PARENT(gui)
 
--- watchdog กันโดนถอด parent
 task.spawn(function()
     while gui do
         if not gui.Parent then SOFT_PARENT(gui) end
@@ -201,7 +203,6 @@ local panel = make("Frame",{
     make("UIStroke",{Color=ACCENT, Thickness=2, Transparency=0.1})
 })
 
--- close
 local btnClose = make("TextButton",{
     Parent=panel, Text="X", Font=Enum.Font.GothamBold, TextSize=20, TextColor3=Color3.new(1,1,1),
     AutoButtonColor=false, BackgroundColor3=Color3.fromRGB(210,35,50),
@@ -213,7 +214,6 @@ btnClose.MouseButton1Click:Connect(function()
     pcall(function() if gui and gui.Parent then gui:Destroy() end end)
 end)
 
--- header
 local head = make("Frame",{
     Parent=panel, BackgroundTransparency=0.15, BackgroundColor3=Color3.fromRGB(14,14,14),
     Size=UDim2.new(1,-28,0,68), Position=UDim2.new(0,14,0,14), ZIndex=5
@@ -231,7 +231,6 @@ make("TextLabel",{
     Text="KEY SYSTEM", TextColor3=ACCENT, TextXAlignment=Enum.TextXAlignment.Left, ZIndex=6
 },{})
 
--- title
 local titleGroup = make("Frame",{Parent=panel, BackgroundTransparency=1, Position=UDim2.new(0,28,0,102), Size=UDim2.new(1,-56,0,76)},{})
 make("UIListLayout",{
     Parent=titleGroup, FillDirection=Enum.FillDirection.Vertical,
@@ -254,7 +253,6 @@ make("TextLabel",{Parent=titleLine2, LayoutOrder=1, BackgroundTransparency=1,
 make("TextLabel",{Parent=titleLine2, LayoutOrder=2, BackgroundTransparency=1,
     Font=Enum.Font.GothamBlack, TextSize=32, Text="HUB X", TextColor3=Color3.new(1,1,1), AutomaticSize=Enum.AutomaticSize.X},{})
 
--- key input
 make("TextLabel",{
     Parent=panel, BackgroundTransparency=1, Position=UDim2.new(0,28,0,188),
     Size=UDim2.new(0,60,0,22), Font=Enum.Font.Gotham, TextSize=16,
@@ -271,7 +269,6 @@ local keyBox = make("TextBox",{
     (function() keyStroke=make("UIStroke",{Color=ACCENT, Transparency=0.75}); return keyStroke end)()
 })
 
--- submit button
 local btnSubmit = make("TextButton",{
     Parent=panel, Text="🔒  Submit Key", Font=Enum.Font.GothamBlack, TextSize=20,
     TextColor3=Color3.new(1,1,1), AutoButtonColor=false, BackgroundColor3=RED, BorderSizePixel=0,
@@ -280,7 +277,6 @@ local btnSubmit = make("TextButton",{
     make("UICorner",{CornerRadius=UDim.new(0,14)})
 })
 
--- toast
 local toast = make("TextLabel",{
     Parent=panel, BackgroundTransparency=0.15, BackgroundColor3=Color3.fromRGB(30,30,30),
     Size=UDim2.fromOffset(0,32), Position=UDim2.new(0.5,0,0,16),
@@ -303,7 +299,6 @@ local function showToast(msg, ok)
     end)
 end
 
--- status
 local statusLabel = make("TextLabel",{
     Parent=panel, BackgroundTransparency=1, Position=UDim2.new(0,28,0,268+50+6),
     Size=UDim2.new(1,-56,0,24), Font=Enum.Font.Gotham, TextSize=14, Text="",
@@ -320,7 +315,6 @@ local function setStatus(txt, ok)
     end
 end
 
--- error fx
 local function flashInputError()
     if keyStroke then
         local old=keyStroke.Color
@@ -337,7 +331,6 @@ local function flashInputError()
     end)
 end
 
--- fade destroy
 local function fadeOutAndDestroy()
     for _,d in ipairs(panel:GetDescendants()) do
         pcall(function()
@@ -359,7 +352,6 @@ local function fadeOutAndDestroy()
     task.delay(0.22,function() if gui and gui.Parent then gui:Destroy() end end)
 end
 
--- submit states
 local submitting=false
 local function refreshSubmit()
     if submitting then return end
@@ -391,6 +383,15 @@ local function forceErrorUI(mainText, toastText)
     task.delay(1.2,function() submitting=false; btnSubmit.Active=true; refreshSubmit() end)
 end
 
+local function verifyWithAllowedOrServer(k)
+    local allowed,nk,meta = isAllowedKey(k)
+    if allowed then
+        local exp = os.time() + (tonumber(meta.ttl) or DEFAULT_TTL_SECONDS)
+        return true,nil,exp
+    end
+    return verifyWithServer(k)
+end
+
 local function doSubmit()
     if submitting then return end
     submitting=true; btnSubmit.AutoButtonColor=false; btnSubmit.Active=false
@@ -402,20 +403,7 @@ local function doSubmit()
     tween(btnSubmit,{BackgroundColor3=Color3.fromRGB(70,170,120)},.08)
     btnSubmit.Text="⏳ Verifying..."
 
-    local valid,reason,expires_at = false,nil,nil
-    local allowed,nk,meta = isAllowedKey(k)
-    if allowed then
-        valid=true
-        expires_at = os.time() + (tonumber(meta.ttl) or DEFAULT_TTL_SECONDS)
-        print("[UFO-HUB-X] allowed key:", nk, "exp:", expires_at)
-    else
-        valid,reason,expires_at = verifyWithServer(k)
-        if valid then
-            print("[UFO-HUB-X] server verified key:", k, "exp:", expires_at)
-        else
-            print("[UFO-HUB-X] key invalid:", k, "reason:", tostring(reason))
-        end
-    end
+    local valid,reason,expires_at = verifyWithAllowedOrServer(k)
 
     if not valid then
         if reason=="server_unreachable" then
@@ -444,7 +432,7 @@ end
 btnSubmit.MouseButton1Click:Connect(doSubmit)
 btnSubmit.Activated:Connect(doSubmit)
 
--------------------- GET KEY (copy link with uid/place) --------------------
+-------------------- GET KEY (เรียก /getkey ก่อน แล้วค่อยคัดลอกลิงก์) --------------------
 local btnGetKey = make("TextButton",{
     Parent=panel, Text="🔐  Get Key", Font=Enum.Font.GothamBold, TextSize=18,
     TextColor3=Color3.new(1,1,1), AutoButtonColor=false, BackgroundColor3=SUB, BorderSizePixel=0,
@@ -453,16 +441,47 @@ local btnGetKey = make("TextButton",{
     make("UICorner",{CornerRadius=UDim.new(0,14)}),
     make("UIStroke",{Color=ACCENT, Transparency=0.6})
 })
+
 btnGetKey.MouseButton1Click:Connect(function()
     local uid   = tostring(LP and LP.UserId or "")
     local place = tostring(game.PlaceId or "")
-    local base  = SERVER_BASES[1] or ""
-    local link  = string.format("%s/getkey?uid=%s&place=%s",
-        base, HttpService:UrlEncode(uid), HttpService:UrlEncode(place)
+    local base  = (SERVER_BASES and SERVER_BASES[1]) or ""
+    if base=="" then
+        showToast("ไม่มีเซิร์ฟเวอร์ให้เรียก", false)
+        return
+    end
+
+    local qs   = string.format("/getkey?uid=%s&place=%s",
+        HttpService:UrlEncode(uid), HttpService:UrlEncode(place)
     )
-    setClipboard(link)
-    btnGetKey.Text="✅ Link copied!"
-    task.delay(1.5,function() btnGetKey.Text="🔐  Get Key" end)
+    local url  = base .. qs
+
+    -- เรียก /getkey ล่วงหน้า (allocate key ให้ uid:place นี้)
+    local ok,data = json_get_with_failover(qs)
+
+    if ok and data and data.ok then
+        setClipboard(url)
+        btnGetKey.Text = "✅ Link copied!"
+        showToast("ลิงก์รับคีย์ถูกคัดลอกแล้ว", true)
+
+        if data.expires_at then
+            local left = tonumber(data.expires_at) - os.time()
+            if left and left>0 then
+                setStatus(("คีย์ถูกจองแล้ว • เหลือเวลา ~%d ชม."):format(math.floor(left/3600)), true)
+            end
+        end
+    else
+        -- ถ้าเรียกไม่สำเร็จ ก็ยังคัดลอกลิงก์ดิบไว้ให้
+        setClipboard(url)
+        btnGetKey.Text = "⚠️ Copied (server?)"
+        showToast("คัดลอกลิงก์แล้ว แต่เรียกเซิร์ฟเวอร์ไม่สำเร็จ", false)
+    end
+
+    task.delay(1.6, function()
+        if btnGetKey and btnGetKey.Parent then
+            btnGetKey.Text = "🔐  Get Key"
+        end
+    end)
 end)
 
 -------------------- Support row --------------------
@@ -493,4 +512,6 @@ end)
 
 -------------------- Open Animation --------------------
 panel.Position = UDim2.fromScale(0.5,0.5) + UDim2.fromOffset(0,14)
-TS:Create(panel, TweenInfo.new(.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Position=UDim2.fromScale(0.5,0.5)}):Play()
+TS:Create(panel, TweenInfo.new(.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+    Position = UDim2.fromScale(0.5,0.5)
+}):Play()
