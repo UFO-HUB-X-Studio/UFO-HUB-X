@@ -510,4 +510,31 @@ btnGetKey.MouseButton1Click:Connect(function()
     _G.UFO_LAST_BASE   = FORCE_BASE
     _G.UFO_SERVER_BASE = FORCE_BASE
 
-    local uid   = tostring(LP and LP.Use
+    local uid   = tostring(LP and LP.UserId or "")
+    local place = tostring(game.PlaceId or "")
+
+    -- ลิงก์หน้า UI บนเว็บ → ให้ผู้ใช้ไปทำขั้นตอนรับคีย์
+    local qs_ui  = string.format("/?uid=%s&place=%s",
+        HttpService:UrlEncode(uid), HttpService:UrlEncode(place)
+    )
+    local base   = sanitizeBase(_G.UFO_SERVER_BASE or FORCE_BASE)
+    local ui_url = base .. qs_ui
+
+    -- คัดลอกลิงก์ (ไม่ยิง /getkey ในเกม)
+    if setclipboard then
+        pcall(setclipboard, ui_url)
+        showToast("คัดลอกลิงก์หน้าเว็บแล้ว", true)
+        setStatus("เปิดลิงก์ในเว็บเพื่อรับคีย์ แล้วค่อยนำมากรอกที่นี่", true)
+    else
+        showLinkPopup(ui_url)
+        showToast("ก็อปจากกล่องลิงก์ได้เลย", true)
+    end
+
+    -- เอฟเฟกต์ปุ่มเล็กน้อย แล้วคืนค่า
+    btnGetKey.Text = "✅ Link copied!"
+    task.delay(1.6, function()
+        if btnGetKey and btnGetKey.Parent then
+            btnGetKey.Text = "🔐  Get Key"
+        end
+    end)
+end)
